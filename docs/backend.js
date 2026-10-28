@@ -167,8 +167,9 @@
 
     if (p === '/api/state') {
       const [d, c] = await Promise.all([
-        sb.from('lv_decks').select('*').order('updated', { ascending: false }),
-        sb.from('lv_collection').select('name, qty'),
+        // bara egna rader – RLS släpper också igenom andras publika lekar och bytesrader
+        sb.from('lv_decks').select('*').eq('owner', user.id).order('updated', { ascending: false }),
+        sb.from('lv_collection').select('name, qty').eq('owner', user.id),
       ]);
       fail(d.error); fail(c.error);
       return {
@@ -205,7 +206,7 @@
         if (n) up.push({ owner: user.id, name: name.slice(0, 150), qty: n }); else del.push(name);
       }
       if (up.length) fail((await sb.from('lv_collection').upsert(up)).error);
-      if (del.length) fail((await sb.from('lv_collection').delete().in('name', del)).error);
+      if (del.length) fail((await sb.from('lv_collection').delete().eq('owner', user.id).in('name', del)).error);
       return {};
     }
     if (p === '/api/settings' && m === 'PUT') {
