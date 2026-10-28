@@ -43,6 +43,8 @@
       scryfall: c.scryfall_uri,
       any_number: /A deck can have any number of cards named/i.test(c.oracle_text || ''),
       commander_ok: /Legendary.*Creature/i.test(c.type_line || '') || /can be your commander/i.test(c.oracle_text || ''),
+      game_changer: !!c.game_changer,
+      v: 2,
     };
   }
   const cardCache = ls.get('lv-cards', {});
@@ -57,7 +59,7 @@
   }
   async function lookupCards(names) {
     const want = [...new Set(names.map(n => n.trim()).filter(Boolean))];
-    const missing = want.filter(n => !cardCache[n.toLowerCase()]);
+    const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 2); // v2: med game_changer
     const notFound = [];
     for (let i = 0; i < missing.length; i += 75) {
       const { body } = await scry('https://api.scryfall.com/cards/collection', {
@@ -175,16 +177,22 @@
       ]);
       fail(d.error); fail(c.error);
       // v2-tabeller: saknas de (gammal databas) blir det bara tomt
-      const [t, g, pr] = await Promise.all([
+      const [t, g, pr, w, l] = await Promise.all([
         sb.from('lv_collection').select('name, for_trade').eq('owner', user.id).gt('for_trade', 0),
         sb.from('lv_games').select('*').order('played_on', { ascending: false }).order('created', { ascending: false }),
         sb.from('lv_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
+        // v3-tabeller
+        sb.from('lv_wishlist').select('*').order('created'),
+        sb.from('lv_loans').select('*').order('lent_on', { ascending: false }),
       ]);
       return {
         decks: d.data.map(deckOut),
         collection: Object.fromEntries(c.data.map(r => [r.name, r.qty])),
         trade: (v2 = !t.error, tradeMap = t.error ? {} : Object.fromEntries(t.data.map(r => [r.name, r.for_trade]))),
         games: g.error ? [] : g.data,
+        wishlist: w.error ? [] : w.data.map(x => ({ ...x, max_price: x.max_price == null ? null : Number(x.max_price), last_price: x.last_price == null ? null : Number(x.last_price) })),
+        loans: l.error ? [] : l.data,
+        v3: !w.error,
         profile: { name: pr.data?.display_name || '', email: user.email },
         cloud: true,
         settings: { svenskaMagicUrl: ls.get('lv-sm-url', SM_DEFAULT) },
@@ -231,6 +239,22 @@
     }
     const gm = p.match(/^\/api\/games\/([\w-]+)$/);
     if (gm && m === 'DELETE') { fail((await sb.from('lv_games').delete().eq('id', gm[1])).error); return { ok: true }; }
+    if (p === '/api/wishlist' && m === 'PUT') {
+      const row = { owner: user.id, name: String(body.name || '').slice(0, 150) };
+      for (const k of ['qty', 'max_price', 'last_price', 'in_stock', 'checked_at', 'alert', 'note']) if (k in body) row[k] = body[k];
+      const { data, error } = await sb.from('lv_wishlist').upsert(row).select().single();
+      fail(error); return data;
+    }
+    if (p === '/api/wishlist' && m === 'DELETE') { fail((await sb.from('lv_wishlist').delete().eq('owner', user.id).eq('name', url.searchParams.get('name'))).error); return { ok: true }; }
+    if (p === '/api/loans' && m === 'POST') {
+      const { data, error } = await sb.from('lv_loans').insert({
+        name: String(body.name || '').slice(0, 150), qty: Math.max(1, Math.min(99, body.qty | 0 || 1)), borrower: String(body.borrower || '').trim().slice(0, 60),
+        lent_on: body.lent_on || undefined, note: String(body.note || '').slice(0, 200),
+      }).select().single();
+      fail(error); return data;
+    }
+    const lm = p.match(/^\/api\/loans\/([\w-]+)$/);
+    if (lm && m === 'DELETE') { fail((await sb.from('lv_loans').delete().eq('id', lm[1])).error); return { ok: true }; }
     if (p === '/api/decks' && m === 'POST') {
       const { data, error } = await sb.from('lv_decks').insert({
         name: String(body.name || 'Ny lek').slice(0, 80), format: body.format === 'modern' ? 'modern' : 'commander',
@@ -248,6 +272,7 @@
       if (Array.isArray(body.cards)) patch.cards = body.cards.filter(c => c && c.name).map(c => ({
         name: String(c.name).slice(0, 150), qty: Math.max(1, Math.min(99, c.qty | 0 || 1)),
         board: ['main', 'side', 'maybe', 'commander'].includes(c.board) ? c.board : 'main',
+        ...(typeof c.cat === 'string' && c.cat ? { cat: c.cat.slice(0, 30) } : {}),
       }));
       const { data, error } = await sb.from('lv_decks').update(patch).eq('id', dm[1]).select().single();
       fail(error); return deckOut(data);
@@ -283,6 +308,22 @@
       const { body: b } = await scry('https://api.scryfall.com/cards/autocomplete?q=' + encodeURIComponent(url.searchParams.get('q') || ''));
       return b.data || [];
     }
+    if (p === '/api/fuzzy') {
+      const { status, body: b } = await scry('https://api.scryfall.com/cards/named?fuzzy=' + encodeURIComponent(url.searchParams.get('q') || ''));
+      if (status === 404) return { notFound: true };
+      const c = slimCard(b); remember(c); persistCards(); return c;
+    }
+    async function extern(payload) {
+      const { data, error } = await sb.functions.invoke('extern', { body: payload });
+      if (error) {
+        let msg = error.message;
+        try { msg = (await error.context.json()).error || msg; } catch {}
+        throw new Error(msg);
+      }
+      return data;
+    }
+    if (p === '/api/combos') return extern({ action: 'combos', commanders: body.commanders, main: body.main });
+    if (p === '/api/archidekt') return extern({ action: 'archidekt', id: url.searchParams.get('id') });
     if (p === '/api/alara') {
       const { data, error } = await sb.functions.invoke('alara', { body: { name: url.searchParams.get('name'), fresh: url.searchParams.get('fresh') === '1' } });
       if (error) {

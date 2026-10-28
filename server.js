@@ -28,6 +28,8 @@ let decks = load('decks.json', []);
 let collection = load('collection.json', {});   // { "Sol Ring": 2 }
 let games = load('games.json', []);
 let trade = load('trade.json', {}); // lokalt: bara egen markering, ingen bytesbörs
+let wishlist = load('wishlist.json', []);
+let loans = load('loans.json', []);
 let settings = load('settings.json', { svenskaMagicUrl: 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1' });
 const cardCache = load('cardcache.json', {});   // lowercased name -> kortinfo
 const alaraCache = load('alaracache.json', {}); // lowercased name -> { at, result }
@@ -74,12 +76,14 @@ function slimCard(c) {
     scryfall: c.scryfall_uri,
     any_number: /A deck can have any number of cards named/i.test(c.oracle_text || ''),
     commander_ok: /Legendary.*Creature/i.test(c.type_line || '') || /can be your commander/i.test(c.oracle_text || ''),
+    game_changer: !!c.game_changer,
+    v: 2,
   };
 }
 
 async function lookupCards(names) {
   const want = [...new Set(names.map(n => n.trim()).filter(Boolean))];
-  const missing = want.filter(n => !cardCache[n.toLowerCase()]);
+  const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 2); // v2: med game_changer
   const notFound = [];
   for (let i = 0; i < missing.length; i += 75) {
     const ids = missing.slice(i, i + 75).map(name => ({ name }));
@@ -107,6 +111,44 @@ async function searchCards(q) {
   for (const s of cards) cardCache[s.name.toLowerCase()] = s;
   save('cardcache.json', cardCache);
   return { cards, total: body.total_cards || cards.length };
+}
+
+async function fuzzy(q) {
+  const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/named?fuzzy=' + encodeURIComponent(q)));
+  if (status === 404) return { notFound: true };
+  const s = slimCard(body);
+  cardCache[s.name.toLowerCase()] = s; save('cardcache.json', cardCache);
+  return s;
+}
+
+// ---------- Commander Spellbook och Archidekt ----------
+const slimCombo = c => ({
+  id: c.id, uses: (c.uses || []).map(u => u.card?.name).filter(Boolean), produces: (c.produces || []).map(p => p.feature?.name).filter(Boolean),
+  steps: String(c.description || '').slice(0, 1500), prereq: [c.easyPrerequisites, c.notablePrerequisites].filter(Boolean).join('\n').slice(0, 600), popularity: c.popularity || 0,
+});
+async function combos(b) {
+  const list = a => (Array.isArray(a) ? a : []).slice(0, 250).map(n => ({ card: String(n).slice(0, 150) }));
+  const { body } = await getJson('https://backend.commanderspellbook.com/find-my-combos', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commanders: list(b.commanders), main: list(b.main) }),
+  });
+  const r = body.results || {};
+  const top = (a = [], n) => a.slice().sort((x, y) => (y.popularity || 0) - (x.popularity || 0)).slice(0, n).map(slimCombo);
+  return { included: top(r.included, 60), almost: top(r.almostIncluded, 40) };
+}
+const BOARD = { commander: 'commander', sideboard: 'side', maybeboard: 'maybe', considering: 'maybe' };
+async function archidekt(id) {
+  if (!/^\d{1,10}$/.test(id)) throw new Error('Ogiltigt lek-id');
+  const { status, body: d } = await getJson(`https://archidekt.com/api/decks/${id}/`);
+  if (status === 404) throw new Error('Leken finns inte eller är privat');
+  const outside = new Set((d.categories || []).filter(c => !c.includedInDeck).map(c => c.name));
+  const cards = (d.cards || []).map(c => {
+    const cats = c.categories || [];
+    let board = 'main';
+    for (const k of cats) { const b = BOARD[k.toLowerCase()]; if (b) { board = b; break; } }
+    if (board === 'main' && cats.length && cats.every(k => outside.has(k))) board = 'maybe';
+    return { name: c.card?.oracleCard?.name, qty: c.quantity || 1, board };
+  }).filter(c => c.name);
+  return { name: String(d.name || 'Importerad lek').slice(0, 80), format: d.deckFormat === 2 ? 'modern' : 'commander', cards };
 }
 
 async function autocomplete(q) {
@@ -193,7 +235,30 @@ function readBody(req) {
 
 async function api(req, res, url) {
   const p = url.pathname, m = req.method;
-  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, profile: { name: '' }, cloud: false, settings });
+  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, wishlist, loans, v3: true, profile: { name: '' }, cloud: false, settings });
+  if (p === '/api/wishlist' && m === 'PUT') {
+    const b = await readBody(req);
+    const name = String(b.name || '').slice(0, 150);
+    if (!name) return send(res, 400, { error: 'name saknas' });
+    let w = wishlist.find(x => x.name === name);
+    if (!w) { w = { name, qty: 1, max_price: null, last_price: null, in_stock: null, checked_at: null, alert: false, note: '', created: new Date().toISOString() }; wishlist.push(w); }
+    for (const k of ['qty', 'max_price', 'last_price', 'in_stock', 'checked_at', 'alert', 'note']) if (k in b) w[k] = b[k];
+    save('wishlist.json', wishlist);
+    return send(res, 200, w);
+  }
+  if (p === '/api/wishlist' && m === 'DELETE') { const n = url.searchParams.get('name'); wishlist = wishlist.filter(x => x.name !== n); save('wishlist.json', wishlist); return send(res, 200, { ok: true }); }
+  if (p === '/api/loans' && m === 'POST') {
+    const b = await readBody(req);
+    const l = { id: crypto.randomUUID(), name: String(b.name || '').slice(0, 150), qty: Math.max(1, Math.min(99, b.qty | 0 || 1)), borrower: String(b.borrower || '').trim().slice(0, 60), lent_on: b.lent_on || new Date().toISOString().slice(0, 10), note: String(b.note || '').slice(0, 200), created: new Date().toISOString() };
+    if (!l.name || !l.borrower) return send(res, 400, { error: 'Kort och lånare krävs' });
+    loans.unshift(l); save('loans.json', loans);
+    return send(res, 200, l);
+  }
+  const lm = p.match(/^\/api\/loans\/([\w-]+)$/);
+  if (lm && m === 'DELETE') { loans = loans.filter(l => l.id !== lm[1]); save('loans.json', loans); return send(res, 200, { ok: true }); }
+  if (p === '/api/fuzzy' && m === 'GET') return send(res, 200, await fuzzy(url.searchParams.get('q') || ''));
+  if (p === '/api/combos' && m === 'POST') return send(res, 200, await combos(await readBody(req)));
+  if (p === '/api/archidekt' && m === 'GET') return send(res, 200, await archidekt(url.searchParams.get('id') || ''));
   if (p === '/api/public-decks' || p === '/api/trades') return send(res, 200, []);
   if (p === '/api/profile' && m === 'PUT') return send(res, 200, { name: '' });
   if (p === '/api/trade' && m === 'PUT') {
@@ -232,6 +297,7 @@ async function api(req, res, url) {
       if (Array.isArray(b.cards)) d.cards = b.cards.filter(c => c && c.name).map(c => ({
         name: String(c.name).slice(0, 150), qty: Math.max(1, Math.min(99, c.qty | 0 || 1)),
         board: ['main', 'side', 'maybe', 'commander'].includes(c.board) ? c.board : 'main',
+        ...(typeof c.cat === 'string' && c.cat ? { cat: c.cat.slice(0, 30) } : {}),
       }));
       d.updated = Date.now(); save('decks.json', decks);
       return send(res, 200, d);

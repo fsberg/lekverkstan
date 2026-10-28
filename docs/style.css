@@ -195,3 +195,60 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .auth-box { width: 100%; max-width: 380px; }
 .auth-box p { margin: .6rem 0; }
 .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-2); }
+
+/* små märken */
+.gc { font-size: .62rem; font-weight: 700; color: var(--warn); border: 1px solid currentColor; border-radius: 4px; padding: 0 .2rem; vertical-align: 1px; }
+.lent { color: var(--accent); font-weight: 700; }
+.badge { display: inline-block; min-width: 1.2rem; padding: 0 .35rem; border-radius: 99px; background: var(--bad); color: #fff; font-size: .72rem; font-weight: 700; text-align: center; line-height: 1.2rem; }
+tr.alert td { background: var(--accent-soft); }
+.offline { background: var(--warn); color: #1d1a26; text-align: center; padding: .4rem 1rem; font-size: .85rem; }
+
+/* kombos */
+.combo { border-top: 1px solid var(--border); padding: .6rem 0; }
+.combo .pill { margin: .2rem .2rem 0 0; }
+.combo details p { margin: .4rem 0; }
+
+/* skanning */
+.scan { position: relative; background: #000; border-radius: 10px; overflow: hidden; margin: .6rem 0; }
+.scan video { width: 100%; display: block; max-height: 60vh; object-fit: cover; }
+.scan .guide { position: absolute; left: 8%; right: 8%; top: 30%; height: 15%; border: 3px solid #e0b84c; border-radius: 8px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.45); }
+
+/* livräknare */
+body.life-on .top, body.life-on .offline { display: none; }
+body.life-on main { max-width: none; padding: 0; }
+.life { position: fixed; inset: 0; display: grid; gap: 4px; background: #000; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; padding-bottom: 44px; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+.life.n2 { grid-template-columns: 1fr; }
+.life.n3 .pl:first-child, .life.n5 .pl:first-child { grid-column: 1 / -1; }
+.pl { position: relative; border-radius: 12px; color: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.pl:nth-child(6n+1) { background: #5b3fd0; } .pl:nth-child(6n+2) { background: #1f7a45; } .pl:nth-child(6n+3) { background: #b3261e; }
+.pl:nth-child(6n+4) { background: #1d5fa8; } .pl:nth-child(6n+5) { background: #9a6200; } .pl:nth-child(6n+6) { background: #4a4458; }
+.pl.flip { transform: rotate(180deg); }
+.pl.out { filter: grayscale(1) brightness(.55); }
+.pl .lifeval { font-size: clamp(3rem, 16vmin, 9rem); font-weight: 800; font-variant-numeric: tabular-nums; pointer-events: none; }
+.pl .pname { position: absolute; top: .5rem; left: 0; right: 0; text-align: center; font-weight: 600; opacity: .9; pointer-events: none; }
+.pl .extra { position: absolute; bottom: .5rem; left: .5rem; right: 3rem; display: flex; gap: .5rem; flex-wrap: wrap; font-size: .85rem; pointer-events: none; }
+.pl .hit { position: absolute; top: 0; bottom: 0; width: 50%; border: 0; background: transparent; cursor: pointer; }
+.pl .hit.minus { left: 0; } .pl .hit.plus { right: 0; }
+.pl .hit:active { background: rgba(255,255,255,.12); }
+.pl .hit.minus::after, .pl .hit.plus::after { position: absolute; top: 50%; transform: translateY(-50%); font-size: 2rem; opacity: .5; color: #fff; }
+.pl .hit.minus::after { content: '−'; left: 1rem; } .pl .hit.plus::after { content: '+'; right: 1rem; }
+.pl .more { position: absolute; bottom: .4rem; right: .4rem; z-index: 2; border: 0; border-radius: 8px; background: rgba(0,0,0,.3); color: #fff; font-size: 1.2rem; width: 2.4rem; height: 2rem; cursor: pointer; }
+.lbar { position: fixed; left: 0; right: 0; bottom: 0; height: 44px; display: flex; gap: .5rem; justify-content: center; align-items: center; background: #000; }
+
+/* proxyutskrift: syns bara när man skriver ut */
+#print { display: none; }
+@media print {
+  @page { size: A4; margin: 10mm; }
+  body > *:not(#print) { display: none !important; }
+  #print { display: block; }
+  #print .sheet { display: grid; grid-template-columns: repeat(3, 63mm); grid-auto-rows: 88mm; gap: 0; justify-content: center; break-after: page; }
+  #print .sheet:last-child { break-after: auto; }
+  #print img { width: 63mm; height: 88mm; object-fit: cover; outline: .2mm solid #999; }
+}
+
+/* smal skärm: menyn får egen rad och kan svepas */
+@media (max-width: 720px) {
+  .top { flex-wrap: wrap; gap: .4rem; }
+  .top nav { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; }
+  .top nav a { white-space: nowrap; }
+}
