@@ -167,8 +167,8 @@
 
     if (p === '/api/state') {
       const [d, c] = await Promise.all([
-        sb.from('decks').select('*').order('updated', { ascending: false }),
-        sb.from('collection').select('name, qty'),
+        sb.from('lv_decks').select('*').order('updated', { ascending: false }),
+        sb.from('lv_collection').select('name, qty'),
       ]);
       fail(d.error); fail(c.error);
       return {
@@ -178,7 +178,7 @@
       };
     }
     if (p === '/api/decks' && m === 'POST') {
-      const { data, error } = await sb.from('decks').insert({
+      const { data, error } = await sb.from('lv_decks').insert({
         name: String(body.name || 'Ny lek').slice(0, 80), format: body.format === 'modern' ? 'modern' : 'commander',
       }).select().single();
       fail(error); return deckOut(data);
@@ -193,10 +193,10 @@
         name: String(c.name).slice(0, 150), qty: Math.max(1, Math.min(99, c.qty | 0 || 1)),
         board: ['main', 'side', 'maybe', 'commander'].includes(c.board) ? c.board : 'main',
       }));
-      const { data, error } = await sb.from('decks').update(patch).eq('id', dm[1]).select().single();
+      const { data, error } = await sb.from('lv_decks').update(patch).eq('id', dm[1]).select().single();
       fail(error); return deckOut(data);
     }
-    if (dm && m === 'DELETE') { const { error } = await sb.from('decks').delete().eq('id', dm[1]); fail(error); return { ok: true }; }
+    if (dm && m === 'DELETE') { const { error } = await sb.from('lv_decks').delete().eq('id', dm[1]); fail(error); return { ok: true }; }
 
     if (p === '/api/collection' && m === 'PUT') {
       const up = [], del = [];
@@ -204,8 +204,8 @@
         const n = Math.max(0, Math.min(999, qty | 0));
         if (n) up.push({ owner: user.id, name: name.slice(0, 150), qty: n }); else del.push(name);
       }
-      if (up.length) fail((await sb.from('collection').upsert(up)).error);
-      if (del.length) fail((await sb.from('collection').delete().in('name', del)).error);
+      if (up.length) fail((await sb.from('lv_collection').upsert(up)).error);
+      if (del.length) fail((await sb.from('lv_collection').delete().in('name', del)).error);
       return {};
     }
     if (p === '/api/settings' && m === 'PUT') {

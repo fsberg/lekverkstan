@@ -75,19 +75,19 @@ Deno.serve(async req => {
   const key = name.toLowerCase();
 
   if (!body.fresh) {
-    const { data: hit } = await admin.from('alara_cache').select('result, fetched_at').eq('name', key).maybeSingle();
+    const { data: hit } = await admin.from('lv_alara_cache').select('result, fetched_at').eq('name', key).maybeSingle();
     if (hit && Date.now() - new Date(hit.fetched_at).getTime() < TTL_MS) return json({ ...hit.result, cached: true });
   }
 
   // enkel gräns per användare och minut, så att ingen råkar hamra på butiken
   const minute = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
-  const { data: use } = await admin.from('alara_usage').select('calls').eq('user_id', u.user.id).eq('minute', minute).maybeSingle();
+  const { data: use } = await admin.from('lv_alara_usage').select('calls').eq('user_id', u.user.id).eq('minute', minute).maybeSingle();
   if ((use?.calls || 0) >= PER_MINUTE) return json({ error: 'För många sökningar, vänta en minut' }, 429);
-  await admin.from('alara_usage').upsert({ user_id: u.user.id, minute, calls: (use?.calls || 0) + 1 });
+  await admin.from('lv_alara_usage').upsert({ user_id: u.user.id, minute, calls: (use?.calls || 0) + 1 });
 
   try {
     const result = await lookup(name);
-    await admin.from('alara_cache').upsert({ name: key, result, fetched_at: new Date().toISOString() });
+    await admin.from('lv_alara_cache').upsert({ name: key, result, fetched_at: new Date().toISOString() });
     return json(result);
   } catch (e) {
     return json({ error: (e as Error).message }, 502);
