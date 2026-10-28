@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lekverkstan</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a href="#/" class="brand"><img src="icon.svg" alt=""> Lekverkstan</a>
+  <nav>
+    <a href="#/" data-nav="lekar">Lekar</a>
+    <a href="#/samling" data-nav="samling">Samling</a>
+    <a href="#/installningar" data-nav="installningar">Inställningar</a>
+  </nav>
+</header>
+<main id="app"></main>
+<div id="preview" class="preview" hidden><img alt=""></div>
+<div id="modal" class="modal" hidden><div class="modal-box" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="toast" hidden></div>
+<script src="config.js"></script>
+<script src="backend.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
