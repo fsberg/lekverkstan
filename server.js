@@ -26,6 +26,8 @@ function save(name, obj) {
 }
 let decks = load('decks.json', []);
 let collection = load('collection.json', {});   // { "Sol Ring": 2 }
+let games = load('games.json', []);
+let trade = load('trade.json', {}); // lokalt: bara egen markering, ingen bytesbörs
 let settings = load('settings.json', { svenskaMagicUrl: 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1' });
 const cardCache = load('cardcache.json', {});   // lowercased name -> kortinfo
 const alaraCache = load('alaracache.json', {}); // lowercased name -> { at, result }
@@ -191,7 +193,23 @@ function readBody(req) {
 
 async function api(req, res, url) {
   const p = url.pathname, m = req.method;
-  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, settings });
+  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, profile: { name: '' }, cloud: false, settings });
+  if (p === '/api/public-decks' || p === '/api/trades') return send(res, 200, []);
+  if (p === '/api/profile' && m === 'PUT') return send(res, 200, { name: '' });
+  if (p === '/api/trade' && m === 'PUT') {
+    const b = await readBody(req);
+    for (const [name, n] of Object.entries(b || {})) { const v = Math.max(0, Math.min(collection[name] || 0, n | 0)); if (v) trade[name] = v; else delete trade[name]; }
+    save('trade.json', trade);
+    return send(res, 200, trade);
+  }
+  if (p === '/api/games' && m === 'POST') {
+    const b = await readBody(req);
+    const g = { id: crypto.randomUUID(), deck_id: b.deck_id || null, deck_name: String(b.deck_name || 'Okänd lek').slice(0, 80), played_on: b.played_on || new Date().toISOString().slice(0, 10), result: ['win', 'loss', 'draw'].includes(b.result) ? b.result : 'loss', players: Math.max(2, Math.min(10, b.players | 0 || 2)), opponents: String(b.opponents || '').slice(0, 300), notes: String(b.notes || '').slice(0, 1000), created: new Date().toISOString() };
+    games.unshift(g); save('games.json', games);
+    return send(res, 200, g);
+  }
+  const gm = p.match(/^\/api\/games\/([\w-]+)$/);
+  if (gm && m === 'DELETE') { games = games.filter(g => g.id !== gm[1]); save('games.json', games); return send(res, 200, { ok: true }); }
 
   if (p === '/api/decks' && m === 'POST') {
     const b = await readBody(req);
@@ -209,6 +227,8 @@ async function api(req, res, url) {
       if (typeof b.name === 'string') d.name = b.name.slice(0, 80);
       if (b.format === 'modern' || b.format === 'commander') d.format = b.format;
       if (typeof b.notes === 'string') d.notes = b.notes.slice(0, 5000);
+      if (typeof b.public === 'boolean') d.public = b.public;
+      if (Array.isArray(b.versions)) d.versions = b.versions.slice(0, 20);
       if (Array.isArray(b.cards)) d.cards = b.cards.filter(c => c && c.name).map(c => ({
         name: String(c.name).slice(0, 150), qty: Math.max(1, Math.min(99, c.qty | 0 || 1)),
         board: ['main', 'side', 'maybe', 'commander'].includes(c.board) ? c.board : 'main',

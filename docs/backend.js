@@ -8,6 +8,8 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
+  let v2 = false;
+  let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
   const ls = {
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -172,12 +174,63 @@
         sb.from('lv_collection').select('name, qty').eq('owner', user.id),
       ]);
       fail(d.error); fail(c.error);
+      // v2-tabeller: saknas de (gammal databas) blir det bara tomt
+      const [t, g, pr] = await Promise.all([
+        sb.from('lv_collection').select('name, for_trade').eq('owner', user.id).gt('for_trade', 0),
+        sb.from('lv_games').select('*').order('played_on', { ascending: false }).order('created', { ascending: false }),
+        sb.from('lv_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
+      ]);
       return {
         decks: d.data.map(deckOut),
         collection: Object.fromEntries(c.data.map(r => [r.name, r.qty])),
+        trade: (v2 = !t.error, tradeMap = t.error ? {} : Object.fromEntries(t.data.map(r => [r.name, r.for_trade]))),
+        games: g.error ? [] : g.data,
+        profile: { name: pr.data?.display_name || '', email: user.email },
+        cloud: true,
         settings: { svenskaMagicUrl: ls.get('lv-sm-url', SM_DEFAULT) },
       };
     }
+    if (p === '/api/profile' && m === 'PUT') {
+      const name = String(body.name || '').trim().slice(0, 40);
+      fail((await sb.from('lv_profiles').upsert({ user_id: user.id, display_name: name })).error);
+      return { name };
+    }
+    if (p === '/api/trade' && m === 'PUT') {
+      for (const [name, n] of Object.entries(body)) {
+        fail((await sb.from('lv_collection').update({ for_trade: Math.max(0, n | 0) }).eq('owner', user.id).eq('name', name)).error);
+        if (n > 0) tradeMap[name] = n | 0; else delete tradeMap[name];
+      }
+      return {};
+    }
+    // andras publika lekar och bytesrader, med visningsnamn
+    async function names(ids) {
+      if (!ids.length) return {};
+      const { data } = await sb.from('lv_profiles').select('user_id, display_name').in('user_id', [...new Set(ids)]);
+      return Object.fromEntries((data || []).map(r => [r.user_id, r.display_name]));
+    }
+    if (p === '/api/public-decks') {
+      const { data, error } = await sb.from('lv_decks').select('id, owner, name, format, cards, notes, updated').eq('public', true).neq('owner', user.id).order('updated', { ascending: false }).limit(200);
+      fail(error);
+      const nm = await names(data.map(x => x.owner));
+      return data.map(x => ({ ...deckOut(x), ownerName: nm[x.owner] || 'Okänd' }));
+    }
+    if (p === '/api/trades') {
+      const { data, error } = await sb.from('lv_collection').select('owner, name, for_trade').gt('for_trade', 0).neq('owner', user.id).limit(2000);
+      fail(error);
+      const nm = await names(data.map(x => x.owner));
+      return data.map(x => ({ name: x.name, qty: x.for_trade, owner: x.owner, ownerName: nm[x.owner] || 'Okänd' }));
+    }
+    if (p === '/api/games' && m === 'POST') {
+      const row = {
+        deck_id: body.deck_id || null, deck_name: String(body.deck_name || 'Okänd lek').slice(0, 80),
+        played_on: body.played_on || undefined, result: ['win', 'loss', 'draw'].includes(body.result) ? body.result : 'loss',
+        players: Math.max(2, Math.min(10, body.players | 0 || 2)), opponents: String(body.opponents || '').slice(0, 300), notes: String(body.notes || '').slice(0, 1000),
+      };
+      const { data, error } = await sb.from('lv_games').insert(row).select().single();
+      fail(error); return data;
+    }
+    const gm = p.match(/^\/api\/games\/([\w-]+)$/);
+    if (gm && m === 'DELETE') { fail((await sb.from('lv_games').delete().eq('id', gm[1])).error); return { ok: true }; }
     if (p === '/api/decks' && m === 'POST') {
       const { data, error } = await sb.from('lv_decks').insert({
         name: String(body.name || 'Ny lek').slice(0, 80), format: body.format === 'modern' ? 'modern' : 'commander',
@@ -190,6 +243,8 @@
       if (typeof body.name === 'string') patch.name = body.name.slice(0, 80) || 'Ny lek';
       if (body.format === 'modern' || body.format === 'commander') patch.format = body.format;
       if (typeof body.notes === 'string') patch.notes = body.notes.slice(0, 5000);
+      if (typeof body.public === 'boolean') patch.public = body.public;
+      if (Array.isArray(body.versions)) patch.versions = body.versions.slice(0, 20);
       if (Array.isArray(body.cards)) patch.cards = body.cards.filter(c => c && c.name).map(c => ({
         name: String(c.name).slice(0, 150), qty: Math.max(1, Math.min(99, c.qty | 0 || 1)),
         board: ['main', 'side', 'maybe', 'commander'].includes(c.board) ? c.board : 'main',
@@ -203,7 +258,9 @@
       const up = [], del = [];
       for (const [name, qty] of Object.entries(body)) {
         const n = Math.max(0, Math.min(999, qty | 0));
-        if (n) up.push({ owner: user.id, name: name.slice(0, 150), qty: n }); else del.push(name);
+        if (n) up.push({ owner: user.id, name: name.slice(0, 150), qty: n, ...(v2 ? { for_trade: Math.min(tradeMap[name] || 0, n) } : {}) });
+        else del.push(name);
+        if (tradeMap[name]) { if (n) tradeMap[name] = Math.min(tradeMap[name], n); else delete tradeMap[name]; }
       }
       if (up.length) fail((await sb.from('lv_collection').upsert(up)).error);
       if (del.length) fail((await sb.from('lv_collection').delete().eq('owner', user.id).in('name', del)).error);
