@@ -8,7 +8,8 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
-  let v2 = false;
+  let v2 = false, v4 = false;
+  const colQty = {}; // egna antal, för att veta när ett kort läggs till (sortering på senast inlagt)
   let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
   const ls = {
@@ -43,10 +44,23 @@
       scryfall: c.scryfall_uri,
       any_number: /A deck can have any number of cards named/i.test(c.oracle_text || ''),
       commander_ok: /Legendary.*Creature/i.test(c.type_line || '') || /can be your commander/i.test(c.oracle_text || ''),
+      eur_foil: c.prices?.eur_foil ? Number(c.prices.eur_foil) : null,
+      id: c.id, set: c.set,
       game_changer: !!c.game_changer,
-      v: 2,
+      v: 3,
     };
   }
+  const slimPrint = c => ({
+    id: c.id, set: c.set, set_name: c.set_name, cn: c.collector_number, released: c.released_at,
+    eur: c.prices?.eur ? Number(c.prices.eur) : null, eur_foil: c.prices?.eur_foil ? Number(c.prices.eur_foil) : null,
+    foil: (c.finishes || []).includes('foil') || (c.finishes || []).includes('etched'), nonfoil: (c.finishes || []).includes('nonfoil'),
+    thumb: (c.image_uris || c.card_faces?.[0]?.image_uris || {}).small || '',
+    extra: [c.border_color === 'borderless' && 'borderless', c.full_art && 'full art', ...(c.frame_effects || []).filter(f => ['showcase', 'extendedart', 'etched', 'inverted'].includes(f))].filter(Boolean),
+  });
+  const cleanPrints = a => (Array.isArray(a) ? a : []).slice(0, 30).filter(p => p && p.qty > 0).map(p => ({
+    id: /^[0-9a-f-]{36}$/.test(p.id) ? p.id : null, set: String(p.set || '').slice(0, 10), cn: String(p.cn || '').slice(0, 12),
+    foil: !!p.foil, qty: Math.min(999, p.qty | 0), eur: typeof p.eur === 'number' ? p.eur : null,
+  }));
   const cardCache = ls.get('lv-cards', {});
   function remember(s) {
     cardCache[s.name.toLowerCase()] = s;
@@ -59,12 +73,24 @@
   }
   async function lookupCards(names) {
     const want = [...new Set(names.map(n => n.trim()).filter(Boolean))];
-    const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 2); // v2: med game_changer
-    const notFound = [];
-    for (let i = 0; i < missing.length; i += 75) {
+    // v3: billigaste utgåvan (prefer:eur-low), så att dyra specialutgåvor inte blåser upp värdet
+    const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 3);
+    const notFound = [], rest = [];
+    for (let i = 0; i < missing.length; i += 25) {
+      const part = missing.slice(i, i + 25);
+      const q = '(' + part.map(n => '!"' + n.replace(/"/g, '') + '"').join(' or ') + ') prefer:eur-low';
+      const { status, body } = await scry('https://api.scryfall.com/cards/search?q=' + encodeURIComponent(q));
+      const got = new Set();
+      if (status !== 404) for (const c of body.data || []) {
+        const hit = part.find(n => n.toLowerCase() === c.name.toLowerCase() || n.toLowerCase() === c.name.split(' // ')[0].toLowerCase());
+        if (hit) { remember(slimCard(c)); got.add(hit); }
+      }
+      rest.push(...part.filter(n => !got.has(n)));
+    }
+    for (let i = 0; i < rest.length; i += 75) {
       const { body } = await scry('https://api.scryfall.com/cards/collection', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifiers: missing.slice(i, i + 75).map(name => ({ name })) }),
+        body: JSON.stringify({ identifiers: rest.slice(i, i + 75).map(name => ({ name })) }),
       });
       for (const c of body.data || []) remember(slimCard(c));
       for (const nf of body.not_found || []) notFound.push(nf.name);
@@ -177,14 +203,19 @@
       ]);
       fail(d.error); fail(c.error);
       // v2-tabeller: saknas de (gammal databas) blir det bara tomt
-      const [t, g, pr, w, l] = await Promise.all([
+      const [t, g, pr, w, l, cm] = await Promise.all([
         sb.from('lv_collection').select('name, for_trade').eq('owner', user.id).gt('for_trade', 0),
         sb.from('lv_games').select('*').order('played_on', { ascending: false }).order('created', { ascending: false }),
         sb.from('lv_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
         // v3-tabeller
         sb.from('lv_wishlist').select('*').order('created'),
         sb.from('lv_loans').select('*').order('lent_on', { ascending: false }),
+        // v4: datum och utgåvor
+        sb.from('lv_collection').select('name, added, prints').eq('owner', user.id),
       ]);
+      v4 = !cm.error;
+      for (const k of Object.keys(colQty)) delete colQty[k];
+      for (const r of c.data) colQty[r.name] = r.qty;
       return {
         decks: d.data.map(deckOut),
         collection: Object.fromEntries(c.data.map(r => [r.name, r.qty])),
@@ -192,7 +223,8 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(x => ({ ...x, max_price: x.max_price == null ? null : Number(x.max_price), last_price: x.last_price == null ? null : Number(x.last_price) })),
         loans: l.error ? [] : l.data,
-        v3: !w.error,
+        v3: !w.error, v4,
+        colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
         profile: { name: pr.data?.display_name || '', email: user.email },
         cloud: true,
         settings: { svenskaMagicUrl: ls.get('lv-sm-url', SM_DEFAULT) },
@@ -223,11 +255,35 @@
       return data.map(x => ({ ...deckOut(x), ownerName: nm[x.owner] || 'Okänd' }));
     }
     if (p === '/api/trades') {
-      const { data, error } = await sb.from('lv_collection').select('owner, name, for_trade').gt('for_trade', 0).neq('owner', user.id).limit(2000);
+      const { data, error } = await sb.from('lv_collection').select('owner, name, for_trade' + (v4 ? ', prints' : '')).gt('for_trade', 0).neq('owner', user.id).limit(2000);
       fail(error);
       const nm = await names(data.map(x => x.owner));
-      return data.map(x => ({ name: x.name, qty: x.for_trade, owner: x.owner, ownerName: nm[x.owner] || 'Okänd' }));
+      return data.map(x => ({ name: x.name, qty: x.for_trade, owner: x.owner, ownerName: nm[x.owner] || 'Okänd', prints: x.prints || [] }));
     }
+    // bokningar i bytesbörsen (v4): mina förfrågningar och förfrågningar på mina kort
+    if (p === '/api/bookings' && m === 'GET') {
+      if (!v4) return [];
+      const { data, error } = await sb.from('lv_bookings').select('*').order('created', { ascending: false }).limit(300);
+      fail(error);
+      const nm = await names(data.map(x => (x.seller === user.id ? x.requester : x.seller)));
+      return data.map(x => ({ ...x, mine: x.requester === user.id, other: nm[x.seller === user.id ? x.requester : x.seller] || 'Okänd' }));
+    }
+    if (p === '/api/bookings' && m === 'POST') {
+      const { data, error } = await sb.from('lv_bookings').insert({
+        seller: body.seller, name: String(body.name || '').slice(0, 150), qty: Math.max(1, Math.min(99, body.qty | 0 || 1)), note: String(body.note || '').slice(0, 300),
+      }).select().single();
+      if (error && /row-level security/i.test(error.message)) throw new Error('Kortet finns inte längre till byte');
+      fail(error); return { ...data, mine: true };
+    }
+    const bm = p.match(/^\/api\/bookings\/([\w-]+)$/);
+    if (bm && m === 'PUT') {
+      const patch = { updated: new Date().toISOString() };
+      if (['requested', 'accepted', 'declined', 'done', 'cancelled'].includes(body.status)) patch.status = body.status;
+      if (typeof body.reply === 'string') patch.reply = body.reply.slice(0, 300);
+      const { data, error } = await sb.from('lv_bookings').update(patch).eq('id', bm[1]).select().single();
+      fail(error); return data;
+    }
+    if (bm && m === 'DELETE') { fail((await sb.from('lv_bookings').delete().eq('id', bm[1])).error); return { ok: true }; }
     if (p === '/api/games' && m === 'POST') {
       const row = {
         deck_id: body.deck_id || null, deck_name: String(body.deck_name || 'Okänd lek').slice(0, 80),
@@ -283,13 +339,36 @@
       const up = [], del = [];
       for (const [name, qty] of Object.entries(body)) {
         const n = Math.max(0, Math.min(999, qty | 0));
-        if (n) up.push({ owner: user.id, name: name.slice(0, 150), qty: n, ...(v2 ? { for_trade: Math.min(tradeMap[name] || 0, n) } : {}) });
+        if (n) up.push({ owner: user.id, name: name.slice(0, 150), qty: n, ...(v2 ? { for_trade: Math.min(tradeMap[name] || 0, n) } : {}), ...(v4 && n > (colQty[name] || 0) ? { added: new Date().toISOString() } : {}) });
         else del.push(name);
+        if (n) colQty[name] = n; else delete colQty[name];
         if (tradeMap[name]) { if (n) tradeMap[name] = Math.min(tradeMap[name], n); else delete tradeMap[name]; }
       }
       if (up.length) fail((await sb.from('lv_collection').upsert(up)).error);
       if (del.length) fail((await sb.from('lv_collection').delete().eq('owner', user.id).in('name', del)).error);
       return {};
+    }
+    if (p === '/api/prints' && m === 'PUT') {
+      if (!v4) throw new Error('Utgåvor kräver databasuppdateringen v4');
+      const prints = cleanPrints(body.prints);
+      fail((await sb.from('lv_collection').update({ prints }).eq('owner', user.id).eq('name', String(body.name || ''))).error);
+      return { prints };
+    }
+    if (p === '/api/prints' && m === 'GET') {
+      const name = url.searchParams.get('name') || '';
+      const { status, body: b } = await scry('https://api.scryfall.com/cards/search?unique=prints&order=released&q=' + encodeURIComponent('!"' + name.replace(/"/g, '') + '"'));
+      if (status === 404) return [];
+      return (b.data || []).filter(c => c.name.toLowerCase() === name.toLowerCase() || c.name.split(' // ')[0].toLowerCase() === name.toLowerCase()).map(slimPrint);
+    }
+    if (p === '/api/prices' && m === 'POST') {
+      const out = {}, ids = [...new Set(body.ids || [])].filter(x => /^[0-9a-f-]{36}$/.test(x)).slice(0, 600);
+      for (let i = 0; i < ids.length; i += 75) {
+        const { body: b } = await scry('https://api.scryfall.com/cards/collection', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiers: ids.slice(i, i + 75).map(id => ({ id })) }),
+        });
+        for (const c of b.data || []) out[c.id] = { eur: c.prices?.eur ? Number(c.prices.eur) : null, eur_foil: c.prices?.eur_foil ? Number(c.prices.eur_foil) : null };
+      }
+      return out;
     }
     if (p === '/api/settings' && m === 'PUT') {
       if (typeof body.svenskaMagicUrl === 'string') ls.set('lv-sm-url', body.svenskaMagicUrl.slice(0, 300) || SM_DEFAULT);
@@ -298,7 +377,7 @@
 
     if (p === '/api/cards') return lookupCards(Array.isArray(body.names) ? body.names.slice(0, 400) : []);
     if (p === '/api/search') {
-      const { status, body: b } = await scry('https://api.scryfall.com/cards/search?order=edhrec&q=' + encodeURIComponent(url.searchParams.get('q') || ''));
+      const { status, body: b } = await scry('https://api.scryfall.com/cards/search?order=edhrec&q=' + encodeURIComponent((url.searchParams.get('q') || '') + ' prefer:eur-low'));
       if (status === 404) return { cards: [], total: 0 };
       const cards = (b.data || []).slice(0, 60).map(slimCard);
       cards.forEach(remember); persistCards();
@@ -311,7 +390,8 @@
     if (p === '/api/fuzzy') {
       const { status, body: b } = await scry('https://api.scryfall.com/cards/named?fuzzy=' + encodeURIComponent(url.searchParams.get('q') || ''));
       if (status === 404) return { notFound: true };
-      const c = slimCard(b); remember(c); persistCards(); return c;
+      const { cards } = await lookupCards([b.name]);
+      return { ...(cards[b.name] || slimCard(b)), print: slimPrint(b) };
     }
     async function extern(payload) {
       const { data, error } = await sb.functions.invoke('extern', { body: payload });

@@ -252,3 +252,6 @@ body.life-on main { max-width: none; padding: 0; }
   .top nav { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; }
   .top nav a { white-space: nowrap; }
 }
+
+/* v4: foil */
+.foil { color: #e0b84c; font-size: .85em; }

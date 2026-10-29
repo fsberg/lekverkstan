@@ -11,6 +11,7 @@ const S = { decks: [], collection: {}, settings: {}, cards: {}, alara: {}, tab: 
 try { S.basicsOwned = localStorage.getItem('basicsOwned') !== '0'; S.view = localStorage.getItem('lv-view') || 'lista'; } catch {}
 Object.assign(S, { trade: {}, games: [], profile: { name: '' }, cloud: false, trades: null, publicDecks: null, edhrec: {} });
 Object.assign(S, { wishlist: [], loans: [], v3: false, rate: 11.5, combos: {}, offline: false });
+Object.assign(S, { colmeta: {}, v4: false, bookings: null });
 try { S.group = localStorage.getItem('lv-group') || 'typ'; } catch {}
 // ungefärligt värde i kronor från Scryfalls europris
 const krE = e => e == null ? '–' : Math.round(e * S.rate).toLocaleString('sv-SE') + ' kr';
@@ -49,9 +50,33 @@ const saveDeckSoon = (() => {
 })();
 async function setOwned(name, qty) {
   qty = Math.max(0, qty | 0);
-  if (qty) S.collection[name] = qty; else delete S.collection[name];
+  if (qty > (S.collection[name] || 0)) (S.colmeta[name] = S.colmeta[name] || { prints: [] }).added = Date.now();
+  if (qty) S.collection[name] = qty; else { delete S.collection[name]; delete S.colmeta[name]; }
   await api('/api/collection', { method: 'PUT', body: { [name]: qty } });
+  // färre ex än angivna utgåvor: ta bort från de senast angivna
+  const pr = S.colmeta[name]?.prints || [];
+  let over = pr.reduce((a, p) => a + p.qty, 0) - qty;
+  if (qty && over > 0) {
+    const next = pr.map(p => ({ ...p }));
+    for (let i = next.length - 1; i >= 0 && over > 0; i--) { const d = Math.min(over, next[i].qty); next[i].qty -= d; over -= d; }
+    await savePrints(name, next.filter(p => p.qty > 0)).catch(() => {});
+  }
 }
+// utgåvor och foil per kort i samlingen: [{ id, set, cn, foil, qty, eur }]
+async function savePrints(name, prints) {
+  const r = await api('/api/prints', { method: 'PUT', body: { name, prints } });
+  (S.colmeta[name] = S.colmeta[name] || { added: Date.now() }).prints = r.prints || prints;
+}
+const printsOf = name => S.colmeta[name]?.prints || [];
+const foilQty = name => printsOf(name).filter(p => p.foil).reduce((a, p) => a + p.qty, 0);
+// värde för det man äger: angivna utgåvor med sina priser, resten till billigaste utgåvan
+function colValue(name) {
+  const c = S.cards[name], q = S.collection[name] || 0;
+  let v = 0, n = 0;
+  for (const p of printsOf(name)) { v += (p.eur ?? (p.foil ? c?.eur_foil : null) ?? c?.eur ?? 0) * p.qty; n += p.qty; }
+  return v + Math.max(0, q - n) * (c?.eur || 0);
+}
+const printLabel = p => `${p.foil ? '✦ foil ' : ''}${(p.set || '').toUpperCase()}${p.cn ? ' #' + p.cn : ''}`;
 
 // ---------- regler ----------
 const owned = name => S.collection[name] || (S.basicsOwned && BASICS.has(name) ? 999 : 0);
@@ -255,8 +280,10 @@ document.addEventListener('mousemove', e => {
 
 // ---------- modal ----------
 function openModal(html, onMount) {
-  const m = $('#modal'); $('.modal-box', m).innerHTML = html; m.hidden = false; $('#preview').hidden = true;
-  onMount && onMount($('.modal-box', m));
+  // ny ruta varje gång, så att lyssnare från förra innehållet inte hänger kvar
+  const m = $('#modal'), old = $('.modal-box', m), box = old.cloneNode(false);
+  old.replaceWith(box); box.innerHTML = html; m.hidden = false; $('#preview').hidden = true;
+  onMount && onMount(box);
 }
 function closeModal() { $('#modal').hidden = true; }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal' || e.target.closest('[data-close]')) closeModal(); });
@@ -278,6 +305,9 @@ function cardModal(name, deck) {
           <label class="own">Jag äger <input type="number" min="0" max="999" value="${S.collection[name] || 0}" id="ownQty" style="width:5rem"> ex</label>
           ${S.v3 ? `<button class="btn small" id="toWish">${S.wishlist.some(w => w.name === name) ? '♥ På önskelistan' : '♡ Önskelista'}</button>` : ''}
         </div>
+        ${S.v4 && S.collection[name] ? `<div class="row small" style="margin-top:.4rem">
+          <span class="muted">${printsOf(name).length ? printsOf(name).map(p => `${p.qty} × ${esc(printLabel(p))}`).join(', ') : 'Ingen utgåva angiven'} · värde ca ${krE(colValue(name))}</span>
+          <button class="btn small" id="toPrints">Utgåva / foil</button></div>` : ''}
         ${entry ? `<h3>I leken</h3><div class="row">
           <select id="boardSel">${['main', 'commander', 'side', 'maybe'].map(b => `<option value="${b}" ${entry.board === b ? 'selected' : ''}>${b === 'main' ? 'Huvudlek' : TYPE_SV[b] || 'Befälhavare'}</option>`).join('')}</select>
           <input type="number" id="deckQty" min="1" max="99" value="${entry.qty}" style="width:5rem"> ex
@@ -296,6 +326,7 @@ function cardModal(name, deck) {
       $('#catSel', box).addEventListener('change', e => { if (e.target.value) entry.cat = e.target.value; else delete entry.cat; saveDeckSoon(deck); render(); });
     }
     if ($('#toWish', box)) $('#toWish', box).onclick = async () => { await addToWishlist(name); closeModal(); render(); };
+    if ($('#toPrints', box)) $('#toPrints', box).onclick = () => printsModal(name, () => cardModal(name, deck));
     if ($('#loanGo', box)) $('#loanGo', box).onclick = async () => {
       const borrower = $('#loanTo', box).value.trim();
       if (!borrower) return toast('Skriv vem som lånar kortet');
@@ -303,6 +334,70 @@ function cardModal(name, deck) {
     };
     box.addEventListener('click', async e => { const b = e.target.closest('[data-back]'); if (b) { await returnLoan(b.dataset.back); cardModal(name, deck); render(); } });
   });
+}
+
+// välj utgåva och foil för exemplaren man äger
+async function printsModal(name, back) {
+  const total = S.collection[name] || 0;
+  let list = printsOf(name).map(p => ({ ...p }));
+  openModal(`<p class="muted">Hämtar utgåvor…</p>`);
+  let all = [];
+  try { all = await api('/api/prints?name=' + encodeURIComponent(name)); } catch (e) { toast('Kunde inte hämta utgåvor: ' + e.message, 4000); }
+  const byId = Object.fromEntries(all.map(p => [p.id, p]));
+  const priceOf = (p, foil) => foil ? p.eur_foil : p.eur;
+  const draw = () => {
+    const used = list.reduce((a, p) => a + p.qty, 0), c = S.cards[name];
+    openModal(`<div class="row"><h2 style="margin:0">${esc(name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
+      <p class="small muted">Du äger ${total} ex. Ange vilka utgåvor och vilka som är foil, så räknas värdet på just dem. Exemplar utan angiven utgåva värderas till billigaste utgåvan (${krE(c?.eur)}).</p>
+      ${list.length ? `<table><tbody>${list.map((p, i) => `<tr><td>${esc(printLabel(p))}<div class="muted small">${esc(byId[p.id]?.set_name || '')}${byId[p.id]?.extra?.length ? ' · ' + esc(byId[p.id].extra.join(', ')) : ''}</div></td>
+        <td class="num small">${krE(p.eur)}/st</td><td class="num"><input type="number" min="0" max="${total}" value="${p.qty}" data-pq="${i}" style="width:4rem"></td></tr>`).join('')}</tbody></table>` : ''}
+      <p class="small">${used < total ? `${total - used} ex utan angiven utgåva.` : '<span class="good">Alla ex har en utgåva.</span>'}</p>
+      ${used < total ? `<h3>Lägg till</h3>
+        ${all.length > 12 ? '<p><input type="search" id="prFind" placeholder="Filtrera utgåvor, t.ex. MH2 eller borderless…" style="width:100%"></p>' : ''}
+        <p><select id="prSet" style="width:100%">${all.map(p => `<option value="${p.id}">${esc(p.set.toUpperCase())} #${esc(p.cn)} – ${esc(p.set_name)}${p.extra.length ? ' (' + esc(p.extra.join(', ')) + ')' : ''} · ${p.eur != null ? krE(p.eur) : '–'}${p.eur_foil != null ? ' / foil ' + krE(p.eur_foil) : ''}</option>`).join('')}</select></p>
+        <div class="row"><label class="small"><input type="checkbox" id="prFoil"> Foil</label><input type="number" id="prQty" min="1" max="${total - used}" value="1" style="width:4rem"> ex
+          <span class="spacer"></span><button class="btn primary small" id="prAdd" ${all.length ? '' : 'disabled'}>Lägg till</button></div>` : ''}
+      <div class="row" style="margin-top:1rem">${back ? '<button class="btn small" id="prBack">← Tillbaka</button>' : ''}<span class="spacer"></span><button class="btn primary" id="prSave">Spara</button></div>`, box => {
+      const sel = $('#prSet', box);
+      const syncFoil = () => { const p = byId[sel.value]; if (!p) return; const f = $('#prFoil', box); f.disabled = !(p.foil && p.nonfoil); f.checked = p.foil && !p.nonfoil ? true : p.nonfoil && !p.foil ? false : f.checked; };
+      if (sel) { sel.onchange = syncFoil; syncFoil(); }
+      if ($('#prFind', box)) $('#prFind', box).oninput = e => {
+        const q = e.target.value.toLowerCase();
+        let first = null;
+        for (const o of sel.options) { o.hidden = !!q && !o.textContent.toLowerCase().includes(q); if (!o.hidden && !first) first = o; }
+        if (first && sel.selectedOptions[0]?.hidden) { sel.value = first.value; syncFoil(); }
+      };
+      box.onchange = e => { // onchange, inte addEventListener: rutan ritas om i samma element
+        const q = e.target.closest('[data-pq]'); if (!q) return;
+        const i = +q.dataset.pq, others = list.reduce((a, p, j) => a + (j === i ? 0 : p.qty), 0);
+        list[i].qty = Math.max(0, Math.min(total - others, +q.value || 0));
+        list = list.filter(p => p.qty > 0); draw();
+      };
+      if ($('#prAdd', box)) $('#prAdd', box).onclick = () => {
+        const p = byId[sel.value], foil = $('#prFoil', box).checked, qty = Math.max(1, Math.min(total - used, +$('#prQty', box).value || 1));
+        const same = list.find(x => x.id === p.id && x.foil === foil);
+        if (same) same.qty += qty; else list.push({ id: p.id, set: p.set, cn: p.cn, foil, qty, eur: priceOf(p, foil) ?? null });
+        draw();
+      };
+      if ($('#prBack', box)) $('#prBack', box).onclick = back;
+      $('#prSave', box).onclick = async () => {
+        try { await savePrints(name, list); toast('Sparat'); render(); back ? back() : closeModal(); }
+        catch (e) { toast('Kunde inte spara: ' + e.message, 4000); }
+      };
+    });
+  };
+  draw();
+}
+// dagsfärska priser för angivna utgåvor (bara i minnet)
+async function refreshPrintPrices() {
+  if (!S.v4 || S.offline || Date.now() - (refreshPrintPrices.at || 0) < 6 * 3600e3) return;
+  refreshPrintPrices.at = Date.now();
+  const ids = Object.values(S.colmeta).flatMap(m => (m.prints || []).map(p => p.id)).filter(Boolean);
+  if (!ids.length) return;
+  const pr = await api('/api/prices', { method: 'POST', body: { ids } }).catch(() => null);
+  if (!pr) return;
+  for (const m of Object.values(S.colmeta)) for (const p of m.prints || []) { const x = pr[p.id]; if (x) p.eur = (p.foil ? x.eur_foil : x.eur) ?? p.eur; }
+  if (location.hash.startsWith('#/samling')) render();
 }
 
 function buyLinks(name) {
@@ -1063,7 +1158,8 @@ function viewCollection() {
     ensureCards(unknown).catch(() => {}).finally(() => { viewCollection.loading = false; render(); });
   }
   const total = names.reduce((a, n) => a + S.collection[n], 0);
-  const value = names.reduce((a, n) => a + (S.cards[n]?.eur || 0) * S.collection[n], 0);
+  const value = names.reduce((a, n) => a + colValue(n), 0);
+  refreshPrintPrices();
   const used = {};
   for (const d of S.decks) for (const c of d.cards) if (c.board !== 'maybe') (used[c.name] = used[c.name] || new Set()).add(d.name);
   let show = viewCollection.show || 'alla';
@@ -1071,7 +1167,12 @@ function viewCollection() {
   const unused = names.filter(n => !used[n]).length;
   const sortBy = viewCollection.sort || 'namn';
   const shown = (show === 'oanvanda' ? names.filter(n => !used[n]) : show === 'byte' ? names.filter(n => S.trade[n]) : names.slice())
-    .sort(sortBy === 'varde' ? (a, b) => (S.cards[b]?.eur || 0) * S.collection[b] - (S.cards[a]?.eur || 0) * S.collection[a] : () => 0);
+    .sort({
+      varde: (a, b) => colValue(b) - colValue(a),
+      senast: (a, b) => (S.colmeta[b]?.added || 0) - (S.colmeta[a]?.added || 0) || a.localeCompare(b),
+      antal: (a, b) => S.collection[b] - S.collection[a] || a.localeCompare(b),
+    }[sortBy] || (() => 0));
+  const day = t => t ? new Date(t).toLocaleDateString('sv-SE') : '';
   const loanRows = S.loans.map(l => `<tr data-loan="${esc(l.id)}"><td><span data-img="${esc(S.cards[l.name]?.image || scryImg(l.name))}">${esc(l.name)}</span></td><td class="num">${l.qty}</td>
     <td>${esc(l.borrower)}</td><td class="small">${esc(l.lent_on)}</td><td><button class="btn small" data-back="${esc(l.id)}">Tillbaka ✓</button></td></tr>`).join('');
   $('#app').innerHTML = `<div id="col">
@@ -1081,15 +1182,15 @@ function viewCollection() {
         <div class="row" style="margin-bottom:.6rem"><div class="add-bar" id="colAdd"></div><input type="search" id="colFilter" placeholder="Filtrera…" style="width:160px"></div>
         <div class="row small" style="margin-bottom:.6rem">
           <div class="seg" id="colShow"><button data-show="alla" class="${show === 'alla' ? 'on' : ''}">Alla</button><button data-show="oanvanda" class="${show === 'oanvanda' ? 'on' : ''}">Används inte i någon lek (${unused})</button>${S.cloud ? `<button data-show="byte" class="${show === 'byte' ? 'on' : ''}">Till byte (${Object.keys(S.trade).length})</button>` : ''}${S.v3 ? `<button data-show="lan" class="${show === 'lan' ? 'on' : ''}">Utlånat (${S.loans.length})</button>` : ''}</div>
-          ${show !== 'lan' ? `<label>Sortera <select id="colSort"><option value="namn">Namn</option><option value="varde" ${sortBy === 'varde' ? 'selected' : ''}>Värde</option></select></label>` : ''}</div>
+          ${show !== 'lan' ? `<label>Sortera <select id="colSort">${[['namn', 'Namn'], ['varde', 'Värde'], ...(S.v4 ? [['senast', 'Senast inlagt']] : []), ['antal', 'Antal']].map(([v, l]) => `<option value="${v}" ${sortBy === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>` : ''}</div>
         ${show === 'lan' ? `${S.loans.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th class="num">Antal</th><th>Hos</th><th>Sedan</th><th></th></tr></thead><tbody>${loanRows}</tbody></table></div>` : '<p class="muted">Inga utlånade kort.</p>'}
           <h3>Låna ut ett kort</h3><div class="row"><div class="add-bar" id="loanCard"></div><input type="text" id="loanTo" placeholder="Till vem?" maxlength="60" style="width:140px"><input type="number" id="loanQty" min="1" max="99" value="1" style="width:4rem"></div>
           <p class="muted small">Välj kortet i listan så sparas lånet. Utlånade kort markeras med ↗ i dina lekar.</p>`
         : shown.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>Typ</th><th>I lekar</th><th class="num">Värde</th><th class="num">Antal</th>${S.cloud ? '<th class="num" title="Hur många du kan tänka dig att byta bort. Syns för andra i bytesbörsen.">Till byte</th>' : ''}</tr></thead><tbody>
-          ${shown.map(n => `<tr data-name="${esc(n)}"><td><span data-img="${esc(S.cards[n]?.image || '')}" data-open style="cursor:pointer">${esc(n)}</span>${lentQty(n) ? ' <span class="lent" title="Utlånat">↗</span>' : ''}</td>
+          ${shown.map(n => `<tr data-name="${esc(n)}"><td><span data-img="${esc(S.cards[n]?.image || '')}" data-open style="cursor:pointer">${esc(n)}</span>${lentQty(n) ? ' <span class="lent" title="Utlånat">↗</span>' : ''}${foilQty(n) ? ` <span class="foil" title="${foilQty(n)} foil">✦${foilQty(n) > 1 ? foilQty(n) : ''}</span>` : ''}${sortBy === 'senast' && S.colmeta[n]?.added ? `<div class="muted small">${day(S.colmeta[n].added)}</div>` : ''}</td>
             <td class="muted small">${esc((S.cards[n]?.type_line || '').split(' — ')[0])}</td>
             <td class="small muted">${used[n] ? esc([...used[n]].join(', ')) : ''}</td>
-            <td class="num small">${S.cards[n]?.eur ? krE(S.cards[n].eur * S.collection[n]) : ''}</td>
+            <td class="num small">${S.cards[n]?.eur || printsOf(n).length ? krE(colValue(n)) : ''}</td>
             <td class="num"><input type="number" min="0" max="999" value="${S.collection[n]}" style="width:4.5rem" data-qty></td>
             ${S.cloud ? `<td class="num"><input type="number" min="0" max="${S.collection[n]}" value="${S.trade[n] || 0}" style="width:4.5rem" data-trade></td>` : ''}</tr>`).join('')}
           </tbody></table></div>` : `<div class="empty">${names.length ? 'Inga kort med det filtret.' : 'Samlingen är tom. Bocka i kort i dina lekar, sök ovan, eller klistra in en lista till höger.'}</div>`}
@@ -1144,6 +1245,7 @@ function viewCollection() {
       const hit = S.cards[c.name] || Object.values(S.cards).find(x => x.name.toLowerCase() === c.name.toLowerCase());
       const n = hit ? hit.name : c.name;
       body[n] = (body[n] ?? (S.collection[n] || 0)) + c.qty;
+      (S.colmeta[n] = S.colmeta[n] || { prints: [] }).added = Date.now();
     }
     Object.assign(S.collection, body);
     await api('/api/collection', { method: 'PUT', body });
@@ -1208,11 +1310,11 @@ function deckArt(d) {
 
 function viewExplore(sub) {
   setNav('utforska');
-  const tabs = [['lekar', 'Publika lekar'], ['byte', 'Bytesbörs']];
-  sub = sub === 'byte' ? 'byte' : 'lekar';
+  const tabs = [['lekar', 'Publika lekar'], ['byte', 'Bytesbörs'], ...(S.v4 ? [['bokningar', 'Bokningar' + (bookingAlerts() ? ` <span class="badge">${bookingAlerts()}</span>` : '')]] : [])];
+  sub = ['byte', 'bokningar'].includes(sub) ? sub : 'lekar';
   $('#app').innerHTML = `<div class="row"><h1>Utforska</h1><span class="spacer"></span><button class="btn small" id="reload">↻ Uppdatera</button></div>
     <div class="tabs">${tabs.map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/utforska/${k}">${l}</a>`).join('')}</div><div id="ex"></div>`;
-  $('#reload').onclick = async () => { await Promise.all([loadPublic(true), loadTrades(true)]); render(); };
+  $('#reload').onclick = async () => { await Promise.all([loadPublic(true), loadTrades(true), loadBookings(true)]); render(); };
   const ex = $('#ex');
   if (!S.cloud) { ex.innerHTML = '<div class="card empty">Utforska finns bara i molnversionen.</div>'; return; }
   if (sub === 'lekar') {
@@ -1226,24 +1328,118 @@ function viewExplore(sub) {
     }).join('')}</div>` : '<div class="card empty">Inga publika lekar än. Bocka i <b>Publik</b> på en av dina lekar så syns den här för alla.</div>';
     return;
   }
+  if (sub === 'bokningar') return tabBookings(ex);
   // bytesbörs
-  if (!S.trades) { ex.innerHTML = '<p class="muted">Hämtar…</p>'; loadTrades().then(render); return; }
+  if (!S.trades || !S.bookings) {
+    ex.innerHTML = '<p class="muted">Hämtar…</p>';
+    Promise.all([loadTrades(), loadBookings()]).then(async () => { await ensureCards(S.trades.map(t => t.name)).catch(() => {}); render(); });
+    return;
+  }
   const need = {};
   for (const d of S.decks) for (const m of missingCards(d)) (need[m.name.toLowerCase()] = need[m.name.toLowerCase()] || new Set()).add(d.name);
   const opt = viewExplore.opt || (viewExplore.opt = { onlyNeed: true, q: '' });
   const rows = S.trades.filter(t => (!opt.onlyNeed || need[t.name.toLowerCase()]) && (!opt.q || t.name.toLowerCase().includes(opt.q.toLowerCase())))
     .sort((a, b) => a.name.localeCompare(b.name) || a.ownerName.localeCompare(b.ownerName));
   const mine = Object.keys(S.trade).length;
+  // min senaste aktiva bokning på just den användarens kort
+  const myBooking = t => S.bookings.find(b => b.mine && b.seller === t.owner && b.name === t.name && ['requested', 'accepted'].includes(b.status));
   ex.innerHTML = `<div class="card">
     <div class="row"><label class="small"><input type="checkbox" id="onlyNeed" ${opt.onlyNeed ? 'checked' : ''}> Bara kort som saknas i mina lekar</label>
       <span class="spacer"></span><input type="search" id="tq" placeholder="Sök kort…" value="${esc(opt.q)}" style="width:200px"></div>
-    ${rows.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>Har till byte</th><th class="num">Antal</th><th>Behövs i</th></tr></thead><tbody>
-      ${rows.map(t => `<tr><td><span data-img="${esc(S.cards[t.name]?.image || scryImg(t.name))}">${esc(t.name)}</span></td><td>${esc(t.ownerName)}</td><td class="num">${t.qty}</td>
-        <td class="small muted">${need[t.name.toLowerCase()] ? esc([...need[t.name.toLowerCase()]].join(', ')) : ''}</td></tr>`).join('')}</tbody></table></div>`
+    ${rows.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>Har till byte</th><th class="num">Antal</th><th class="num" title="Billigaste utgåvan enligt Cardmarket-trend">Pris ca</th><th>Behövs i</th>${S.v4 ? '<th></th>' : ''}</tr></thead><tbody>
+      ${rows.map((t, i) => {
+        const foil = (t.prints || []).filter(p => p.foil), b = S.v4 && myBooking(t);
+        return `<tr><td><span data-img="${esc(S.cards[t.name]?.image || scryImg(t.name))}">${esc(t.name)}</span>${foil.length ? ` <span class="foil" title="Har foil: ${esc(foil.map(printLabel).join(', '))}">✦</span>` : ''}</td><td>${esc(t.ownerName)}</td><td class="num">${t.qty}</td>
+        <td class="num small">${krE(S.cards[t.name]?.eur)}</td>
+        <td class="small muted">${need[t.name.toLowerCase()] ? esc([...need[t.name.toLowerCase()]].join(', ')) : ''}</td>
+        ${S.v4 ? `<td>${b ? `<span class="pill ${b.status === 'accepted' ? 'good' : ''}">${BOOK_SV[b.status]}</span>` : `<button class="btn small" data-book="${i}">Boka</button>`}</td>` : ''}</tr>`;
+      }).join('')}</tbody></table></div>`
       : `<p class="muted">${S.trades.length ? 'Inga träffar med de filtren.' : 'Ingen har markerat kort till byte än.'}</p>`}
-    <p class="muted small">Du har ${mine} olika kort markerade till byte. Markera dina under <a href="#/samling">Samling</a>, och sätt ditt namn under <a href="#/installningar">Inställningar</a> så att andra ser vem du är.</p></div>`;
+    <p class="muted small">Priset är ungefärligt för billigaste utgåvan, ✦ betyder att ägaren har foil. ${S.v4 ? 'Boka ett kort så ser ägaren det under Bokningar och kan svara. ' : ''}Du har ${mine} olika kort markerade till byte. Markera dina under <a href="#/samling">Samling</a>, och sätt ditt namn under <a href="#/installningar">Inställningar</a> så att andra ser vem du är.</p></div>`;
   $('#onlyNeed').onchange = e => { opt.onlyNeed = e.target.checked; render(); };
   $('#tq').oninput = e => { opt.q = e.target.value; clearTimeout(viewExplore.t); viewExplore.t = setTimeout(() => { render(); const i = $('#tq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
+  ex.addEventListener('click', e => { const b = e.target.closest('[data-book]'); if (b) bookModal(rows[+b.dataset.book]); });
+}
+
+// ---------- bokningar i bytesbörsen ----------
+const BOOK_SV = { requested: 'Väntar på svar', accepted: 'Godkänd', declined: 'Nekad', done: 'Klar', cancelled: 'Ångrad' };
+async function loadBookings(force) {
+  if (!S.cloud || !S.v4) { S.bookings = []; return; }
+  if (S.bookings && !force && Date.now() - loadBookings.at < 60000) return;
+  S.bookings = await api('/api/bookings').catch(() => S.bookings || []);
+  loadBookings.at = Date.now();
+  updateBookBadge();
+}
+// nya förfrågningar på mina kort + svar på mina bokningar som jag inte sett
+function bookingAlerts() {
+  let seen = 0; try { seen = +localStorage.getItem('lv-book-seen') || 0; } catch {}
+  return (S.bookings || []).filter(b => (!b.mine && b.status === 'requested') || (b.mine && ['accepted', 'declined', 'done'].includes(b.status) && Date.parse(b.updated) > seen)).length;
+}
+function updateBookBadge() {
+  const a = $('[data-nav=utforska]'); if (!a) return;
+  const n = bookingAlerts();
+  a.innerHTML = `Utforska${n ? ` <span class="badge">${n}</span>` : ''}`;
+}
+function bookModal(t) {
+  openModal(`<div class="row"><h2 style="margin:0">Boka ${esc(t.name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
+    <p class="small muted">${esc(t.ownerName)} har ${t.qty} ex till byte · ca ${krE(S.cards[t.name]?.eur)}/st. Ägaren ser din bokning och kan godkänna eller neka den.</p>
+    <p class="row"><label class="small">Antal <input type="number" id="bkQty" min="1" max="${t.qty}" value="1" style="width:4rem"></label></p>
+    <p><input type="text" id="bkNote" maxlength="300" placeholder="Meddelande, t.ex. vad du kan byta med eller när ni ses" style="width:100%"></p>
+    <div class="row"><span class="spacer"></span><button class="btn primary" id="bkGo">Boka</button></div>`, box => {
+    $('#bkGo', box).onclick = async () => {
+      try {
+        const b = await api('/api/bookings', { method: 'POST', body: { seller: t.owner, name: t.name, qty: Math.max(1, Math.min(t.qty, +$('#bkQty', box).value || 1)), note: $('#bkNote', box).value.trim() } });
+        S.bookings.unshift({ ...b, other: t.ownerName });
+        closeModal(); toast(`Bokat hos ${t.ownerName}`); render();
+      } catch (e) { toast('Kunde inte boka: ' + e.message, 4000); }
+    };
+  });
+}
+function tabBookings(ex) {
+  if (!S.bookings) { ex.innerHTML = '<p class="muted">Hämtar…</p>'; loadBookings().then(render); return; }
+  try { localStorage.setItem('lv-book-seen', String(Date.now())); } catch {}
+  const open = b => ['requested', 'accepted'].includes(b.status);
+  const inc = S.bookings.filter(b => !b.mine), out = S.bookings.filter(b => b.mine);
+  const sortB = a => a.slice().sort((x, y) => open(y) - open(x) || Date.parse(y.updated) - Date.parse(x.updated));
+  const row = b => `<tr data-id="${esc(b.id)}" class="${!b.mine && b.status === 'requested' ? 'alert' : ''}">
+    <td><span data-img="${esc(S.cards[b.name]?.image || scryImg(b.name))}">${esc(b.name)}</span> <span class="muted">× ${b.qty}</span>
+      ${b.note ? `<div class="small">”${esc(b.note)}”</div>` : ''}${b.reply ? `<div class="small muted">Svar: ”${esc(b.reply)}”</div>` : ''}</td>
+    <td>${esc(b.other)}</td><td><span class="pill ${b.status === 'accepted' || b.status === 'done' ? 'good' : ''}">${BOOK_SV[b.status]}</span><div class="muted small">${new Date(b.updated).toLocaleDateString('sv-SE')}</div></td>
+    <td class="num">${b.mine
+      ? (open(b) ? '<button class="btn small" data-bs="cancelled">Ångra</button>' : `${b.status === 'done' ? '<button class="btn small" data-bown>+ Samlingen</button> ' : ''}<button class="icon-btn" data-bdel title="Ta bort">✕</button>`)
+      : b.status === 'requested' ? '<button class="btn small primary" data-bs="accepted">Godkänn</button> <button class="btn small" data-bs="declined">Neka</button>'
+      : b.status === 'accepted' ? '<button class="btn small primary" data-bs="done">Överlämnat ✓</button> <button class="btn small" data-bs="declined">Neka</button>'
+      : '<button class="icon-btn" data-bdel title="Ta bort">✕</button>'}</td></tr>`;
+  const table = (list, who) => list.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>${who}</th><th>Status</th><th></th></tr></thead><tbody>${sortB(list).map(row).join('')}</tbody></table></div>` : '';
+  ex.innerHTML = `<div class="card"><h2>Förfrågningar på mina kort</h2>${table(inc, 'Från') || '<p class="muted">Ingen har bokat dina kort än.</p>'}</div>
+    <div class="card"><h2>Mina bokningar</h2>${table(out, 'Hos') || '<p class="muted">Du har inte bokat något. Boka kort under <a href="#/utforska/byte">Bytesbörs</a>.</p>'}</div>
+    <p class="muted small">Bara du och den andra ser en bokning. När du markerar ett kort som överlämnat kan du ta bort det ur din samling.</p>`;
+  updateBookBadge();
+  ex.addEventListener('click', async e => {
+    const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+    const b = S.bookings.find(x => x.id === tr.dataset.id);
+    try {
+      const s = e.target.closest('[data-bs]');
+      if (s) {
+        const status = s.dataset.bs;
+        let reply;
+        if (!b.mine && (status === 'accepted' || status === 'declined')) { reply = prompt(status === 'accepted' ? 'Svar till ' + b.other + ' (valfritt), t.ex. när ni kan ses:' : 'Varför? (valfritt)', b.reply || ''); if (reply === null) return; }
+        if (status === 'cancelled' && !confirm(`Ångra bokningen av ${b.name}?`)) return;
+        Object.assign(b, await api('/api/bookings/' + b.id, { method: 'PUT', body: { status, ...(reply != null ? { reply } : {}) } }));
+        if (status === 'done' && S.collection[b.name] && confirm(`Ta bort ${b.qty} ex ${b.name} ur din samling?`)) {
+          const left = Math.max(0, S.collection[b.name] - b.qty), tr2 = Math.min(S.trade[b.name] || 0, left);
+          await setOwned(b.name, left);
+          if ((S.trade[b.name] || 0) !== tr2) { await api('/api/trade', { method: 'PUT', body: { [b.name]: tr2 } }); if (tr2) S.trade[b.name] = tr2; else delete S.trade[b.name]; }
+        }
+        return render();
+      }
+      if (e.target.closest('[data-bown]')) { await setOwned(b.name, (S.collection[b.name] || 0) + b.qty); toast(`+${b.qty} ${b.name} i samlingen`); }
+      if (e.target.closest('[data-bown]') || e.target.closest('[data-bdel]')) {
+        await api('/api/bookings/' + b.id, { method: 'DELETE' });
+        S.bookings = S.bookings.filter(x => x !== b); render();
+      }
+    } catch (err) { toast('Det gick inte: ' + err.message, 4000); }
+  });
 }
 
 function viewPublicDeck(id) {
@@ -1474,65 +1670,145 @@ async function ocrWorker() {
   if (ocrWorker.w) return ocrWorker.w;
   if (!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
   const w = await window.Tesseract.createWorker('eng');
-  await w.setParameters({ tessedit_pageseg_mode: '7' }); // en rad text
+  // en rad text, bara tecken som finns i kortnamn
+  await w.setParameters({ tessedit_pageseg_mode: '7', tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÄÉÍÓÖÚÛàáâäéíóöúû',- ", preserve_interword_spaces: '1' });
   return (ocrWorker.w = w);
+}
+// Klipper ut den del av kamerabilden som syns i den gula rutan. Videon visas med object-fit: cover,
+// så rutans läge på skärmen måste räknas om till kamerans egna pixlar.
+function scanCrop(video, guide) {
+  const vw = video.videoWidth, vh = video.videoHeight, vr = video.getBoundingClientRect(), gr = guide.getBoundingClientRect();
+  const k = Math.max(vr.width / vw, vr.height / vh) || 1;
+  const ox = (vw * k - vr.width) / 2, oy = (vh * k - vr.height) / 2;
+  let sx = (gr.left - vr.left + ox) / k, sy = (gr.top - vr.top + oy) / k, sw = gr.width / k, sh = gr.height / k;
+  if (!(sw > 0 && sh > 0)) { sx = vw * 0.08; sy = vh * 0.30; sw = vw * 0.84; sh = vh * 0.15; } // ingen layout (test)
+  return { sx, sy, sw, sh };
+}
+// Två sätt att tvätta bilden, de klarar olika kort: 'sv' = uppskalat svartvitt (Otsu, ljus text på mörk botten vänds),
+// 'grå' = gråskala med förstärkt kontrast. Pixlarna räknas för hand eftersom Safari saknar ctx.filter.
+function scanPrep(video, { sx, sy, sw, sh }, mode = 'sv') {
+  const scale = mode === 'sv' ? Math.min(4, Math.max(1, 160 / sh)) : 1.5;
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(sw * scale); cv.height = Math.round(sh * scale);
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+  let img;
+  try { img = ctx.getImageData(0, 0, cv.width, cv.height); } catch { return cv; }
+  const d = img.data, n = d.length / 4, gray = new Uint8Array(n), hist = new Array(256).fill(0);
+  for (let i = 0; i < n; i++) { const g = (d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114) | 0; gray[i] = g; hist[g]++; }
+  if (mode === 'grå') {
+    for (let i = 0; i < n; i++) d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = Math.max(0, Math.min(255, (gray[i] - 128) * 1.4 + 128));
+    ctx.putImageData(img, 0, 0);
+    return cv;
+  }
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0, wB = 0, best = 0, th = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t]; if (!wB) continue;
+    const wF = n - wB; if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) ** 2;
+    if (between > best) { best = between; th = t; }
+  }
+  const darkBg = gray.filter(g => g < th).length > n / 2; // mest mörkt = ljus text
+  for (let i = 0; i < n; i++) { const on = gray[i] >= th; const v = on !== darkBg ? 255 : 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+// tänkbara namn ur textläsarens rad: hela raden, utan skräp i kanterna, utan sista ordet (manakostnad)
+function scanCandidates(text) {
+  const line = (text || '').split('\n').map(s => s.replace(/[^A-Za-zÀ-ÿ',\- ]/g, ' ').replace(/\s+/g, ' ').trim()).sort((a, b) => b.length - a.length)[0] || '';
+  const small = /^(of|the|to|in|and|from|with|a|an|for|on|at|into)$/;
+  // kortnamn: ord med stor bokstav, småord emellan. Skräp från ramen och manasymboler hamnar i kanterna.
+  const words = line.split(' ').filter(w => w.length > 2 || small.test(w));
+  while (words.length && (words[0].length < 3 || !/^[A-ZÀ-Ý]/.test(words[0]))) words.shift();
+  while (words.length && (words[words.length - 1].length < 3 || !/^[A-ZÀ-Ý]/.test(words[words.length - 1]))) words.pop();
+  // hela raden först, sedan utan de sista orden (oftast manakostnad som lästs som bokstäver)
+  const out = [];
+  for (let k = words.length; k >= Math.max(1, words.length - 2); k--) out.push(words.slice(0, k).join(' '));
+  return [...new Set(out)].filter(s => s.length >= 4);
 }
 function scanModal() {
   if (!navigator.mediaDevices?.getUserMedia) return toast('Kameran går inte att använda i den här webbläsaren', 4000);
-  let stream, added = [];
+  let stream, added = [], auto = true, busy = false, hitShown = false, lastAdd = { name: '', at: 0 }, timer;
+  try { auto = localStorage.getItem('lv-scan-auto') !== '0'; } catch {}
   openModal(`<div class="row"><h2 style="margin:0">Skanna kort</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
     <div class="scan"><video playsinline muted autoplay></video><div class="guide"></div></div>
-    <p class="small muted">Lägg kortets namn i den ljusa rutan, håll stilla och tryck Läs. Bra ljus hjälper.</p>
-    <div class="row"><button class="btn primary" id="scRead" disabled>Startar kameran…</button><span id="scMsg" class="small"></span></div>
+    <p class="small muted">Håll kortet så att <b>namnraden</b> fyller den gula rutan. Håll stilla en sekund. Bra ljus hjälper, undvik reflexer på foilkort.</p>
+    <div class="row"><button class="btn primary" id="scRead" disabled>Startar kameran…</button><label class="small"><input type="checkbox" id="scAuto" ${auto ? 'checked' : ''}> Läs automatiskt</label>
+      <button class="btn small" id="scTorch" hidden>🔦 Lampa</button><span id="scMsg" class="small"></span></div>
     <div id="scHit"></div><div id="scLog" class="small muted"></div>`, async box => {
-    const video = $('video', box), btn = $('#scRead', box), msg = $('#scMsg', box);
-    const stop = () => stream && stream.getTracks().forEach(t => t.stop());
+    const video = $('video', box), guide = $('.guide', box), btn = $('#scRead', box), msg = $('#scMsg', box);
+    const stop = () => { clearTimeout(timer); stream && stream.getTracks().forEach(t => t.stop()); };
     const obs = new MutationObserver(() => { if ($('#modal').hidden || !video.isConnected) { stop(); obs.disconnect(); if (added.length) render(); } });
     obs.observe($('#modal'), { attributes: true, childList: true, subtree: true });
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
       video.srcObject = stream;
     } catch (e) { btn.textContent = 'Ingen kamera'; msg.textContent = 'Tillåt kameran i webbläsaren och försök igen.'; return; }
+    // lampa och autofokus där telefonen klarar det
+    const track = stream.getVideoTracks()[0], caps = track.getCapabilities?.() || {};
+    if (caps.focusMode?.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    if (caps.torch) {
+      let on = false; const tb = $('#scTorch', box); tb.hidden = false;
+      tb.onclick = () => { on = !on; track.applyConstraints({ advanced: [{ torch: on }] }).catch(() => {}); tb.classList.toggle('primary', on); };
+    }
     btn.textContent = 'Laddar textläsaren…';
     try { await ocrWorker(); } catch (e) { btn.textContent = 'Fel'; msg.textContent = e.message; return; }
     btn.disabled = false; btn.textContent = '📷 Läs';
+    const add = async (card, foil) => {
+      S.cards[card.name] = { ...card }; delete S.cards[card.name].print;
+      await setOwned(card.name, (S.collection[card.name] || 0) + 1);
+      if (foil && card.print) {
+        const pr = printsOf(card.name).map(p => ({ ...p })), same = pr.find(p => p.id === card.print.id && p.foil);
+        if (same) same.qty++; else pr.push({ id: card.print.id, set: card.print.set, cn: card.print.cn, foil: true, qty: 1, eur: card.print.eur_foil ?? null });
+        await savePrints(card.name, pr).catch(e => toast('Foil sparades inte: ' + e.message, 4000));
+      }
+      added.unshift(card.name + (foil ? ' ✦' : '')); lastAdd = { name: card.name, at: Date.now() };
+      $('#scLog', box).textContent = 'Tillagt: ' + added.slice(0, 8).join(', ') + (added.length > 8 ? '…' : '');
+      $('#scHit', box).innerHTML = ''; msg.textContent = ''; hitShown = false; loop();
+    };
     const showHit = card => {
+      hitShown = true; navigator.vibrate?.(40);
       $('#scHit', box).innerHTML = `<div class="row" style="margin-top:.6rem">${card.thumb ? `<img src="${esc(card.thumb)}" alt="" style="width:90px;border-radius:5px">` : ''}
-        <div><b>${esc(card.name)}</b><div class="small muted">Du har ${S.collection[card.name] || 0}</div>
-        <div class="row" style="margin-top:.4rem"><button class="btn primary small" id="scAdd">+1 i samlingen</button><button class="btn small" id="scWrong">Fel kort</button></div></div></div>`;
-      $('#scAdd', box).onclick = async () => {
-        S.cards[card.name] = card;
-        await setOwned(card.name, (S.collection[card.name] || 0) + 1);
-        added.unshift(card.name);
-        $('#scLog', box).textContent = 'Tillagt: ' + added.slice(0, 8).join(', ') + (added.length > 8 ? '…' : '');
-        $('#scHit', box).innerHTML = ''; msg.textContent = '';
-      };
+        <div><b>${esc(card.name)}</b><div class="small muted">Du har ${S.collection[card.name] || 0} · ca ${krE(card.eur)}</div>
+        <div class="row" style="margin-top:.4rem"><button class="btn primary" id="scAdd">+1</button>${S.v4 && card.print ? `<button class="btn" id="scFoil" title="Som foil, utgåva ${esc(card.print.set.toUpperCase())} – går att ändra i samlingen">+1 foil</button>` : ''}<button class="btn small" id="scWrong">Fel kort</button><button class="btn small" id="scSkip">Hoppa över</button></div></div></div>`;
+      $('#scAdd', box).onclick = () => add(card, false);
+      if ($('#scFoil', box)) $('#scFoil', box).onclick = () => add(card, true);
+      $('#scSkip', box).onclick = () => { lastAdd = { name: card.name, at: Date.now() }; $('#scHit', box).innerHTML = ''; hitShown = false; loop(); };
       $('#scWrong', box).onclick = () => {
         $('#scHit', box).innerHTML = '<div class="add-bar" id="scFix" style="margin-top:.6rem"></div>';
         addCardUI($('#scFix', box), async name => { await ensureCards([name]).catch(() => {}); if (S.cards[name]) showHit(S.cards[name]); }, 'Skriv rätt namn…').focus();
       };
     };
-    btn.onclick = async () => {
-      if (!video.videoWidth) return;
-      btn.disabled = true; msg.textContent = 'Läser…';
-      // samma ruta som .guide: 8–92 % i bredd, 30–45 % i höjd
-      const vw = video.videoWidth, vh = video.videoHeight;
-      const sx = vw * 0.08, sy = vh * 0.30, sw = vw * 0.84, sh = vh * 0.15;
-      const cv = document.createElement('canvas');
-      cv.width = Math.round(sw * 1.5); cv.height = Math.round(sh * 1.5);
-      const ctx = cv.getContext('2d');
-      ctx.filter = 'grayscale(1) contrast(1.4)';
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+    const read = async manual => {
+      if (busy || !video.videoWidth || hitShown) return;
+      busy = true; if (manual) { btn.disabled = true; msg.textContent = 'Läser…'; }
       try {
-        const { data } = await (await ocrWorker()).recognize(cv);
-        const text = (data.text || '').split('\n').map(s => s.replace(/[^A-Za-zÀ-ÿ',\- ]/g, ' ').replace(/\s+/g, ' ').trim()).sort((a, b) => b.length - a.length)[0] || '';
-        if (text.length < 3) { msg.textContent = 'Hittade ingen text. Försök igen.'; return; }
-        const card = await api('/api/fuzzy?q=' + encodeURIComponent(text));
-        if (card.notFound) { msg.textContent = `Läste "${text}" men hittade inget kort. Försök igen.`; return; }
-        msg.textContent = ''; showHit(card);
+        const w = await ocrWorker(), crop = scanCrop(video, guide);
+        // knappen provar båda sätten, automatläget växlar mellan dem för varje bild
+        const modes = manual ? ['sv', 'grå'] : [(read.flip = !read.flip) ? 'sv' : 'grå'];
+        let seen = '';
+        for (const mode of modes) {
+          const { data } = await w.recognize(scanPrep(video, crop, mode));
+          const cands = data.confidence >= (manual ? 25 : 40) ? scanCandidates(data.text) : [];
+          seen = seen || cands[0] || '';
+          for (const q of cands) {
+            const card = await api('/api/fuzzy?q=' + encodeURIComponent(q)).catch(() => ({ notFound: true }));
+            if (card.notFound || !card.name) continue;
+            // samma kort som nyss lades till: vänta tills ett nytt kort hålls upp
+            if (!manual && card.name === lastAdd.name && Date.now() - lastAdd.at < 4000) return;
+            msg.textContent = ''; showHit(card); return;
+          }
+        }
+        if (manual) msg.textContent = seen ? `Läste ”${seen}” men hittade inget kort. Försök igen.` : 'Hittade ingen text. Flytta kortet så att namnet fyller rutan.';
       } catch (e) { msg.textContent = 'Fel: ' + e.message; }
-      finally { btn.disabled = false; }
+      finally { busy = false; btn.disabled = false; }
     };
+    const loop = () => { clearTimeout(timer); if (auto && video.isConnected) timer = setTimeout(async () => { await read(false); loop(); }, 700); };
+    btn.onclick = () => read(true);
+    $('#scAuto', box).onchange = e => { auto = e.target.checked; try { localStorage.setItem('lv-scan-auto', auto ? '1' : '0'); } catch {} loop(); };
+    loop();
   });
 }
 
@@ -1631,7 +1907,13 @@ function lifeEnd() {
   const alive = s.players.map((p, i) => ({ p, i })).filter(x => !isOut(x.p, s));
   openModal(`<div class="row"><h2 style="margin:0">Vem vann?</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
     <div class="grid" style="margin-top:.6rem">${s.players.map((p, i) => `<button class="btn ${alive.length === 1 && alive[0].i === i ? 'primary' : ''}" data-win="${i}">${esc(p.name)}</button>`).join('')}<button class="btn" data-win="draw">Oavgjort</button></div>
-    <p class="muted small">${s.setup.deck ? 'Matchen sparas i spelloggen med din lek.' : 'Ingen lek vald, matchen sparas inte i spelloggen.'}</p>`, box => {
+    <p class="muted small">${s.setup.deck ? 'Matchen sparas i spelloggen med din lek.' : 'Ingen lek vald, matchen sparas inte i spelloggen.'}</p>
+    <div class="row" style="margin-top:.8rem"><span class="spacer"></span><button class="btn small" id="lAbort">Avbryt matchen utan resultat</button></div>`, box => {
+    $('#lAbort', box).onclick = () => {
+      if (!confirm('Avbryta matchen? Den sparas inte i spelloggen.')) return;
+      lifeState.s = { setup: s.setup }; saveLife(); closeModal(); wakeLock(false); document.body.classList.remove('life-on'); location.hash = '#/matcher';
+      toast('Matchen avbröts');
+    };
     box.onclick = async e => {
       const b = e.target.closest('[data-win]'); if (!b) return;
       const w = b.dataset.win, d = S.decks.find(x => x.id === s.setup.deck);
@@ -1701,6 +1983,7 @@ addEventListener('hashchange', () => { $('#preview').hidden = true; render(); })
   }
   Object.assign(S, st);
   if (!S.cloud) $$('[data-nav=utforska]').forEach(a => a.remove());
+  else if (S.v4 && !S.offline) loadBookings().then(() => location.hash.startsWith('#/utforska') && render());
   if (!S.v3) $$('[data-nav=onskelista]').forEach(a => a.remove());
   updateWishBadge();
   const names = new Set([...S.decks.flatMap(d => d.cards.map(c => c.name)), ...Object.keys(S.collection), ...S.wishlist.map(w => w.name)]);

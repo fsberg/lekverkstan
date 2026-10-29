@@ -30,6 +30,7 @@ let games = load('games.json', []);
 let trade = load('trade.json', {}); // lokalt: bara egen markering, ingen bytesbörs
 let wishlist = load('wishlist.json', []);
 let loans = load('loans.json', []);
+let colmeta = load('colmeta.json', {}); // { "Sol Ring": { added: 1730000000000, prints: [...] } }
 let settings = load('settings.json', { svenskaMagicUrl: 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1' });
 const cardCache = load('cardcache.json', {});   // lowercased name -> kortinfo
 const alaraCache = load('alaracache.json', {}); // lowercased name -> { at, result }
@@ -73,29 +74,52 @@ function slimCard(c) {
     image: img.normal || '',
     thumb: img.small || '',
     eur: c.prices?.eur ? Number(c.prices.eur) : (c.prices?.eur_foil ? Number(c.prices.eur_foil) : null),
+    eur_foil: c.prices?.eur_foil ? Number(c.prices.eur_foil) : null,
+    id: c.id, set: c.set,
     scryfall: c.scryfall_uri,
     any_number: /A deck can have any number of cards named/i.test(c.oracle_text || ''),
     commander_ok: /Legendary.*Creature/i.test(c.type_line || '') || /can be your commander/i.test(c.oracle_text || ''),
     game_changer: !!c.game_changer,
-    v: 2,
+    v: 3,
   };
 }
+// en utgåva av ett kort, för val av utgåva och foil i samlingen
+const slimPrint = c => ({
+  id: c.id, set: c.set, set_name: c.set_name, cn: c.collector_number, released: c.released_at,
+  eur: c.prices?.eur ? Number(c.prices.eur) : null, eur_foil: c.prices?.eur_foil ? Number(c.prices.eur_foil) : null,
+  foil: (c.finishes || []).includes('foil') || (c.finishes || []).includes('etched'), nonfoil: (c.finishes || []).includes('nonfoil'),
+  thumb: (c.image_uris || c.card_faces?.[0]?.image_uris || {}).small || '',
+  extra: [c.border_color === 'borderless' && 'borderless', c.full_art && 'full art', ...(c.frame_effects || []).filter(f => ['showcase', 'extendedart', 'etched', 'inverted'].includes(f))].filter(Boolean),
+});
 
+function remember(s) {
+  cardCache[s.name.toLowerCase()] = s;
+  // dubbelsidiga kort: spara även första sidans namn
+  if (s.name.includes(' // ')) cardCache[s.name.split(' // ')[0].toLowerCase()] = s;
+}
+// v3: billigaste utgåvan (prefer:eur-low), så att dyra specialutgåvor inte blåser upp värdet
 async function lookupCards(names) {
   const want = [...new Set(names.map(n => n.trim()).filter(Boolean))];
-  const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 2); // v2: med game_changer
+  const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 3);
   const notFound = [];
-  for (let i = 0; i < missing.length; i += 75) {
-    const ids = missing.slice(i, i + 75).map(name => ({ name }));
+  let rest = [];
+  for (let i = 0; i < missing.length; i += 25) {
+    const part = missing.slice(i, i + 25);
+    const q = '(' + part.map(n => '!"' + n.replace(/"/g, '') + '"').join(' or ') + ') prefer:eur-low';
+    const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/search?q=' + encodeURIComponent(q)));
+    const got = new Set();
+    if (status !== 404) for (const c of body.data || []) {
+      const hit = part.find(n => n.toLowerCase() === c.name.toLowerCase() || n.toLowerCase() === c.name.split(' // ')[0].toLowerCase());
+      if (hit) { remember(slimCard(c)); got.add(hit); }
+    }
+    rest.push(...part.filter(n => !got.has(n)));
+  }
+  for (let i = 0; i < rest.length; i += 75) {
+    const ids = rest.slice(i, i + 75).map(name => ({ name }));
     const { body } = await scryQ(() => getJson('https://api.scryfall.com/cards/collection', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiers: ids }),
     }));
-    for (const c of body.data || []) {
-      const s = slimCard(c);
-      cardCache[s.name.toLowerCase()] = s;
-      // dubbelsidiga kort: spara även första sidans namn
-      if (s.name.includes(' // ')) cardCache[s.name.split(' // ')[0].toLowerCase()] = s;
-    }
+    for (const c of body.data || []) remember(slimCard(c));
     for (const nf of body.not_found || []) notFound.push(nf.name);
   }
   if (missing.length) save('cardcache.json', cardCache);
@@ -105,7 +129,7 @@ async function lookupCards(names) {
 }
 
 async function searchCards(q) {
-  const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/search?order=edhrec&q=' + encodeURIComponent(q)));
+  const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/search?order=edhrec&q=' + encodeURIComponent(q + ' prefer:eur-low')));
   if (status === 404) return { cards: [], total: 0 };
   const cards = (body.data || []).slice(0, 60).map(slimCard);
   for (const s of cards) cardCache[s.name.toLowerCase()] = s;
@@ -113,13 +137,35 @@ async function searchCards(q) {
   return { cards, total: body.total_cards || cards.length };
 }
 
+// skanning: kortet med billigaste priset + utgåvan som Scryfall gissade på
 async function fuzzy(q) {
   const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/named?fuzzy=' + encodeURIComponent(q)));
   if (status === 404) return { notFound: true };
-  const s = slimCard(body);
-  cardCache[s.name.toLowerCase()] = s; save('cardcache.json', cardCache);
-  return s;
+  const { cards } = await lookupCards([body.name]);
+  return { ...(cards[body.name] || slimCard(body)), print: slimPrint(body) };
 }
+async function prints(name) {
+  const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/search?unique=prints&order=released&q=' + encodeURIComponent('!"' + name.replace(/"/g, '') + '"')));
+  if (status === 404) return [];
+  return (body.data || []).filter(c => c.name.toLowerCase() === name.toLowerCase() || c.name.split(' // ')[0].toLowerCase() === name.toLowerCase()).map(slimPrint);
+}
+// aktuella priser för sparade utgåvor
+async function pricesById(ids) {
+  const out = {};
+  ids = [...new Set(ids)].filter(x => /^[0-9a-f-]{36}$/.test(x)).slice(0, 600);
+  for (let i = 0; i < ids.length; i += 75) {
+    const { body } = await scryQ(() => getJson('https://api.scryfall.com/cards/collection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiers: ids.slice(i, i + 75).map(id => ({ id })) }),
+    }));
+    for (const c of body.data || []) out[c.id] = { eur: c.prices?.eur ? Number(c.prices.eur) : null, eur_foil: c.prices?.eur_foil ? Number(c.prices.eur_foil) : null };
+  }
+  return out;
+}
+// utgåvor i samlingen: [{ id, set, cn, foil, qty, eur }] – tvättas på samma sätt lokalt och i molnet
+const cleanPrints = a => (Array.isArray(a) ? a : []).slice(0, 30).filter(p => p && p.qty > 0).map(p => ({
+  id: /^[0-9a-f-]{36}$/.test(p.id) ? p.id : null, set: String(p.set || '').slice(0, 10), cn: String(p.cn || '').slice(0, 12),
+  foil: !!p.foil, qty: Math.min(999, p.qty | 0), eur: typeof p.eur === 'number' ? p.eur : null,
+}));
 
 // ---------- Commander Spellbook och Archidekt ----------
 const slimCombo = c => ({
@@ -235,7 +281,7 @@ function readBody(req) {
 
 async function api(req, res, url) {
   const p = url.pathname, m = req.method;
-  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, wishlist, loans, v3: true, profile: { name: '' }, cloud: false, settings });
+  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, wishlist, loans, colmeta, v3: true, v4: true, profile: { name: '' }, cloud: false, settings });
   if (p === '/api/wishlist' && m === 'PUT') {
     const b = await readBody(req);
     const name = String(b.name || '').slice(0, 150);
@@ -259,7 +305,7 @@ async function api(req, res, url) {
   if (p === '/api/fuzzy' && m === 'GET') return send(res, 200, await fuzzy(url.searchParams.get('q') || ''));
   if (p === '/api/combos' && m === 'POST') return send(res, 200, await combos(await readBody(req)));
   if (p === '/api/archidekt' && m === 'GET') return send(res, 200, await archidekt(url.searchParams.get('id') || ''));
-  if (p === '/api/public-decks' || p === '/api/trades') return send(res, 200, []);
+  if (p === '/api/public-decks' || p === '/api/trades' || p === '/api/bookings') return send(res, 200, []);
   if (p === '/api/profile' && m === 'PUT') return send(res, 200, { name: '' });
   if (p === '/api/trade' && m === 'PUT') {
     const b = await readBody(req);
@@ -309,11 +355,22 @@ async function api(req, res, url) {
     const b = await readBody(req);
     for (const [name, qty] of Object.entries(b || {})) {
       const n = Math.max(0, Math.min(999, qty | 0));
-      if (n) collection[name] = n; else delete collection[name];
+      if (n > (collection[name] || 0)) (colmeta[name] = colmeta[name] || {}).added = Date.now();
+      if (n) collection[name] = n; else { delete collection[name]; delete colmeta[name]; }
     }
-    save('collection.json', collection);
+    save('collection.json', collection); save('colmeta.json', colmeta);
     return send(res, 200, collection);
   }
+  if (p === '/api/prints' && m === 'PUT') {
+    const b = await readBody(req);
+    const name = String(b.name || '');
+    if (!collection[name]) return send(res, 400, { error: 'Kortet finns inte i samlingen' });
+    (colmeta[name] = colmeta[name] || { added: Date.now() }).prints = cleanPrints(b.prints);
+    save('colmeta.json', colmeta);
+    return send(res, 200, colmeta[name]);
+  }
+  if (p === '/api/prints' && m === 'GET') return send(res, 200, await prints(url.searchParams.get('name') || ''));
+  if (p === '/api/prices' && m === 'POST') return send(res, 200, await pricesById((await readBody(req)).ids || []));
   if (p === '/api/settings' && m === 'PUT') {
     const b = await readBody(req);
     if (typeof b.svenskaMagicUrl === 'string') settings.svenskaMagicUrl = b.svenskaMagicUrl.slice(0, 300);
