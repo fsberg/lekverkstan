@@ -183,6 +183,9 @@
     a.href = '#'; a.textContent = 'Logga ut'; a.title = user.email;
     a.onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
     nav.appendChild(a);
+    // delad livräknare: broadcast-kanal i Supabase Realtime (inget sparas i databasen)
+    window.LV_CHANNEL = name => sb.channel(name, { config: { broadcast: { self: false } } });
+    window.LV_USER = { id: user.id };
   })();
 
   // ---------- appens api()-vägar mot Supabase ----------
@@ -379,7 +382,7 @@
     if (p === '/api/search') {
       const { status, body: b } = await scry('https://api.scryfall.com/cards/search?order=edhrec&q=' + encodeURIComponent((url.searchParams.get('q') || '') + ' prefer:eur-low'));
       if (status === 404) return { cards: [], total: 0 };
-      const cards = (b.data || []).slice(0, 60).map(slimCard);
+      const cards = (b.data || []).slice(0, Math.min(175, +url.searchParams.get('max') || 60)).map(slimCard);
       cards.forEach(remember); persistCards();
       return { cards, total: b.total_cards || cards.length };
     }
@@ -404,6 +407,13 @@
     }
     if (p === '/api/combos') return extern({ action: 'combos', commanders: body.commanders, main: body.main });
     if (p === '/api/archidekt') return extern({ action: 'archidekt', id: url.searchParams.get('id') });
+    if (p === '/api/rules') return extern({ action: 'rules' });
+    if (p === '/api/rulings') {
+      const id = url.searchParams.get('id') || '';
+      if (!/^[0-9a-f-]{36}$/.test(id)) return [];
+      const { status, body: b } = await scry(`https://api.scryfall.com/cards/${id}/rulings`);
+      return status === 404 ? [] : (b.data || []).map(r => ({ date: r.published_at, text: r.comment, source: r.source }));
+    }
     if (p === '/api/alara') {
       const { data, error } = await sb.functions.invoke('alara', { body: { name: url.searchParams.get('name'), fresh: url.searchParams.get('fresh') === '1' } });
       if (error) {

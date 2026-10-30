@@ -1,5 +1,5 @@
 // Hämtningar från tjänster som inte tillåter anrop direkt från webbläsaren:
-// kombos från Commander Spellbook och lekar från Archidekt. Kräver inloggad användare (verify_jwt).
+// kombos från Commander Spellbook, lekar från Archidekt och regelboken från Wizards. Kräver inloggad användare (verify_jwt).
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
 const UA = 'Lekverkstan/1.0 (privat lekbyggare)';
@@ -55,6 +55,22 @@ async function archidekt(id: string) {
   return { name: String(d.name || 'Importerad lek').slice(0, 80), format: d.deckFormat === 2 ? 'modern' : 'commander', cards };
 }
 
+// Comprehensive Rules som text. Länken byter namn vid varje ny version, så den letas upp på regelsidan.
+let rulesCache: { at: number; url: string; text: string } | null = null;
+async function rules() {
+  if (rulesCache && Date.now() - rulesCache.at < 24 * 3600e3) return { url: rulesCache.url, text: rulesCache.text };
+  const page = await fetch('https://magic.wizards.com/en/rules', { headers: { 'User-Agent': UA } });
+  if (!page.ok) throw new Error(`${page.status} från Wizards`);
+  const m = (await page.text()).match(/https:\/\/media\.wizards\.com\/[^"']+?\.txt/);
+  if (!m) throw new Error('Hittade ingen regeltext hos Wizards');
+  const url = m[0].replace(/ /g, '%20');
+  const r = await fetch(url, { headers: { 'User-Agent': UA } });
+  if (!r.ok) throw new Error(`${r.status} från Wizards`);
+  const text = (await r.text()).slice(0, 3_000_000);
+  rulesCache = { at: Date.now(), url, text };
+  return { url, text };
+}
+
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'POST krävs' }, 405);
@@ -74,6 +90,7 @@ Deno.serve(async req => {
   try {
     if (body.action === 'combos') return json(await combos(body));
     if (body.action === 'archidekt') return json(await archidekt(String(body.id || '')));
+    if (body.action === 'rules') return json(await rules());
     return json({ error: 'okänd action' }, 400);
   } catch (e) {
     return json({ error: (e as Error).message }, 502);

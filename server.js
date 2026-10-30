@@ -128,10 +128,10 @@ async function lookupCards(names) {
   return { cards, notFound };
 }
 
-async function searchCards(q) {
+async function searchCards(q, max = 60) {
   const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/search?order=edhrec&q=' + encodeURIComponent(q + ' prefer:eur-low')));
   if (status === 404) return { cards: [], total: 0 };
-  const cards = (body.data || []).slice(0, 60).map(slimCard);
+  const cards = (body.data || []).slice(0, Math.min(175, max)).map(slimCard);
   for (const s of cards) cardCache[s.name.toLowerCase()] = s;
   save('cardcache.json', cardCache);
   return { cards, total: body.total_cards || cards.length };
@@ -166,6 +166,26 @@ const cleanPrints = a => (Array.isArray(a) ? a : []).slice(0, 30).filter(p => p 
   id: /^[0-9a-f-]{36}$/.test(p.id) ? p.id : null, set: String(p.set || '').slice(0, 10), cn: String(p.cn || '').slice(0, 12),
   foil: !!p.foil, qty: Math.min(999, p.qty | 0), eur: typeof p.eur === 'number' ? p.eur : null,
 }));
+
+// ---------- regler ----------
+let rulesCache = null;
+async function rules() {
+  if (rulesCache && Date.now() - rulesCache.at < 24 * 3600e3) return { url: rulesCache.url, text: rulesCache.text };
+  const page = await fetch('https://magic.wizards.com/en/rules', { headers: { 'User-Agent': UA } });
+  if (!page.ok) throw new Error(`${page.status} från Wizards`);
+  const m = (await page.text()).match(/https:\/\/media\.wizards\.com\/[^"']+?\.txt/);
+  if (!m) throw new Error('Hittade ingen regeltext hos Wizards');
+  const url = m[0].replace(/ /g, '%20');
+  const r = await fetch(url, { headers: { 'User-Agent': UA } });
+  if (!r.ok) throw new Error(`${r.status} från Wizards`);
+  rulesCache = { at: Date.now(), url, text: (await r.text()).slice(0, 3e6) };
+  return { url, text: rulesCache.text };
+}
+async function rulings(id) {
+  if (!/^[0-9a-f-]{36}$/.test(id)) return [];
+  const { status, body } = await scryQ(() => getJson(`https://api.scryfall.com/cards/${id}/rulings`));
+  return status === 404 ? [] : (body.data || []).map(r => ({ date: r.published_at, text: r.comment, source: r.source }));
+}
 
 // ---------- Commander Spellbook och Archidekt ----------
 const slimCombo = c => ({
@@ -302,6 +322,8 @@ async function api(req, res, url) {
   }
   const lm = p.match(/^\/api\/loans\/([\w-]+)$/);
   if (lm && m === 'DELETE') { loans = loans.filter(l => l.id !== lm[1]); save('loans.json', loans); return send(res, 200, { ok: true }); }
+  if (p === '/api/rules' && m === 'GET') return send(res, 200, await rules());
+  if (p === '/api/rulings' && m === 'GET') return send(res, 200, await rulings(url.searchParams.get('id') || ''));
   if (p === '/api/fuzzy' && m === 'GET') return send(res, 200, await fuzzy(url.searchParams.get('q') || ''));
   if (p === '/api/combos' && m === 'POST') return send(res, 200, await combos(await readBody(req)));
   if (p === '/api/archidekt' && m === 'GET') return send(res, 200, await archidekt(url.searchParams.get('id') || ''));
@@ -382,7 +404,7 @@ async function api(req, res, url) {
     const b = await readBody(req);
     return send(res, 200, await lookupCards(Array.isArray(b.names) ? b.names.slice(0, 400) : []));
   }
-  if (p === '/api/search' && m === 'GET') return send(res, 200, await searchCards(url.searchParams.get('q') || ''));
+  if (p === '/api/search' && m === 'GET') return send(res, 200, await searchCards(url.searchParams.get('q') || '', +url.searchParams.get('max') || 60));
   if (p === '/api/autocomplete' && m === 'GET') return send(res, 200, await autocomplete(url.searchParams.get('q') || ''));
   if (p === '/api/alara' && m === 'GET') {
     const name = url.searchParams.get('name') || '';

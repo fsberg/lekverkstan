@@ -8,7 +8,7 @@ self.addEventListener('install', e => {
   e.waitUntil(caches.open(APP).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => ![APP, LIB, IMG].includes(k)).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => ![APP, LIB, IMG, 'lv-rules'].includes(k)).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 async function trim(cache, max) {

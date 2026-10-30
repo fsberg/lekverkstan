@@ -76,6 +76,11 @@ function colValue(name) {
   for (const p of printsOf(name)) { v += (p.eur ?? (p.foil ? c?.eur_foil : null) ?? c?.eur ?? 0) * p.qty; n += p.qty; }
   return v + Math.max(0, q - n) * (c?.eur || 0);
 }
+// bild för en viss utgåva: Scryfalls bildadress byggs av kortets id
+const printImg = (p, size = 'normal') => p?.id ? `https://cards.scryfall.io/${size}/front/${p.id[0]}/${p.id[1]}/${p.id}.jpg` : '';
+// bilden som visas för ett kort i samlingen: första angivna utgåvan, annars standardbilden
+const printOf1 = name => printsOf(name).find(p => p.id);
+const ownImg = name => printImg(printsOf(name).find(p => p.id)) || S.cards[name]?.image || '';
 const printLabel = p => `${p.foil ? '✦ foil ' : ''}${(p.set || '').toUpperCase()}${p.cn ? ' #' + p.cn : ''}`;
 
 // ---------- regler ----------
@@ -294,11 +299,19 @@ function cardModal(name, deck) {
   const entry = deck && deck.cards.find(x => x.name === name);
   openModal(`
     <div class="card-detail">
-      ${c?.image ? `<img src="${esc(c.image)}" alt="${esc(name)}">` : '<div class="empty">Ingen bild</div>'}
+      ${(() => {
+        // har man angett utgåvor visas den man äger, med små bilder för att byta mellan dem
+        const own = S.collection[name] ? printsOf(name).filter((p, i, a) => p.id && a.findIndex(x => x.id === p.id) === i) : [];
+        const main = own.length ? printImg(own[0]) : c?.image;
+        return `<div>${main ? `<img id="cdImg" src="${esc(main)}" alt="${esc(name)}">` : '<div class="empty">Ingen bild</div>'}
+          ${own.length > 1 || (own.length && c?.image) ? `<div class="row small" style="margin-top:.4rem;flex-wrap:wrap">${own.map(p => `<img src="${esc(printImg(p, 'small'))}" data-swap="${esc(printImg(p))}" alt="${esc(printLabel(p))}" title="${esc(printLabel(p))}" style="width:46px;border-radius:3px;cursor:pointer">`).join('')}${c?.image ? `<img src="${esc(c.thumb || c.image)}" data-swap="${esc(c.image)}" title="Billigaste utgåvan" alt="" style="width:46px;border-radius:3px;cursor:pointer;opacity:.6">` : ''}</div>` : ''}
+          ${own.length ? `<div class="muted small">${esc(printLabel(own[0]))}</div>` : ''}</div>`;
+      })()}
       <div>
         <div class="row"><h2 style="margin:0">${esc(name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
         <p class="muted small">${esc(c?.type_line || '')} ${c ? manaHtml(c.mana_cost) : ''}</p>
         <p class="oracle">${esc(c?.oracle_text || '')}</p>
+        ${c?.id ? '<p class="small" style="margin:.2rem 0"><a href="#" id="rulGo">Regelfrågor och förtydliganden</a></p><div id="rulBox" class="small"></div>' : ''}
         <p class="small">Commander: <b>${esc(c?.legalities.commander || '?')}</b> · Modern: <b>${esc(c?.legalities.modern || '?')}</b> · värde ca ${krE(c?.eur)} <span class="muted">(${eur(c?.eur)})</span>
           ${c?.game_changer ? ' · <span class="pill warn" title="Kortet finns på Wizards lista över game changers och påverkar lekens bracket">game changer</span>' : ''}</p>
         <div class="row small">
@@ -326,6 +339,15 @@ function cardModal(name, deck) {
       $('#catSel', box).addEventListener('change', e => { if (e.target.value) entry.cat = e.target.value; else delete entry.cat; saveDeckSoon(deck); render(); });
     }
     if ($('#toWish', box)) $('#toWish', box).onclick = async () => { await addToWishlist(name); closeModal(); render(); };
+    if ($('#rulGo', box)) $('#rulGo', box).onclick = async e => {
+      e.preventDefault();
+      const el = $('#rulBox', box); el.innerHTML = '<p class="muted">Hämtar…</p>';
+      try {
+        const r = await api('/api/rulings?id=' + c.id);
+        el.innerHTML = r.length ? r.map(x => `<p style="margin:.3rem 0"><span class="muted">${esc(x.date)}</span> ${esc(x.text)}</p>`).join('') : '<p class="muted">Inga förtydliganden för det här kortet.</p>';
+      } catch (err) { el.innerHTML = `<p class="muted">Kunde inte hämta: ${esc(err.message)}</p>`; }
+    };
+    box.addEventListener('click', e => { const t = e.target.closest('[data-swap]'); if (t) $('#cdImg', box).src = t.dataset.swap; });
     if ($('#toPrints', box)) $('#toPrints', box).onclick = () => printsModal(name, () => cardModal(name, deck));
     if ($('#loanGo', box)) $('#loanGo', box).onclick = async () => {
       const borrower = $('#loanTo', box).value.trim();
@@ -349,17 +371,18 @@ async function printsModal(name, back) {
     const used = list.reduce((a, p) => a + p.qty, 0), c = S.cards[name];
     openModal(`<div class="row"><h2 style="margin:0">${esc(name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
       <p class="small muted">Du äger ${total} ex. Ange vilka utgåvor och vilka som är foil, så räknas värdet på just dem. Exemplar utan angiven utgåva värderas till billigaste utgåvan (${krE(c?.eur)}).</p>
-      ${list.length ? `<table><tbody>${list.map((p, i) => `<tr><td>${esc(printLabel(p))}<div class="muted small">${esc(byId[p.id]?.set_name || '')}${byId[p.id]?.extra?.length ? ' · ' + esc(byId[p.id].extra.join(', ')) : ''}</div></td>
+      ${list.length ? `<table><tbody>${list.map((p, i) => `<tr><td><img src="${esc(printImg(p, 'small'))}" alt="" style="width:40px;border-radius:3px;vertical-align:middle;margin-right:.4rem" data-img="${esc(printImg(p))}">${esc(printLabel(p))}<div class="muted small">${esc(byId[p.id]?.set_name || '')}${byId[p.id]?.extra?.length ? ' · ' + esc(byId[p.id].extra.join(', ')) : ''}</div></td>
         <td class="num small">${krE(p.eur)}/st</td><td class="num"><input type="number" min="0" max="${total}" value="${p.qty}" data-pq="${i}" style="width:4rem"></td></tr>`).join('')}</tbody></table>` : ''}
       <p class="small">${used < total ? `${total - used} ex utan angiven utgåva.` : '<span class="good">Alla ex har en utgåva.</span>'}</p>
       ${used < total ? `<h3>Lägg till</h3>
         ${all.length > 12 ? '<p><input type="search" id="prFind" placeholder="Filtrera utgåvor, t.ex. MH2 eller borderless…" style="width:100%"></p>' : ''}
         <p><select id="prSet" style="width:100%">${all.map(p => `<option value="${p.id}">${esc(p.set.toUpperCase())} #${esc(p.cn)} – ${esc(p.set_name)}${p.extra.length ? ' (' + esc(p.extra.join(', ')) + ')' : ''} · ${p.eur != null ? krE(p.eur) : '–'}${p.eur_foil != null ? ' / foil ' + krE(p.eur_foil) : ''}</option>`).join('')}</select></p>
+        <img id="prPrev" alt="" style="width:146px;border-radius:7px;display:block;margin:0 auto .5rem">
         <div class="row"><label class="small"><input type="checkbox" id="prFoil"> Foil</label><input type="number" id="prQty" min="1" max="${total - used}" value="1" style="width:4rem"> ex
           <span class="spacer"></span><button class="btn primary small" id="prAdd" ${all.length ? '' : 'disabled'}>Lägg till</button></div>` : ''}
       <div class="row" style="margin-top:1rem">${back ? '<button class="btn small" id="prBack">← Tillbaka</button>' : ''}<span class="spacer"></span><button class="btn primary" id="prSave">Spara</button></div>`, box => {
       const sel = $('#prSet', box);
-      const syncFoil = () => { const p = byId[sel.value]; if (!p) return; const f = $('#prFoil', box); f.disabled = !(p.foil && p.nonfoil); f.checked = p.foil && !p.nonfoil ? true : p.nonfoil && !p.foil ? false : f.checked; };
+      const syncFoil = () => { const p = byId[sel.value]; if (!p) return; if ($('#prPrev', box)) $('#prPrev', box).src = p.thumb || printImg(p, 'small'); const f = $('#prFoil', box); f.disabled = !(p.foil && p.nonfoil); f.checked = p.foil && !p.nonfoil ? true : p.nonfoil && !p.foil ? false : f.checked; };
       if (sel) { sel.onchange = syncFoil; syncFoil(); }
       if ($('#prFind', box)) $('#prFind', box).oninput = e => {
         const q = e.target.value.toLowerCase();
@@ -557,7 +580,7 @@ function cardRow(deck, c) {
   return `<li class="${full ? 'owned' : ''}" data-name="${esc(c.name)}" data-board="${c.board}">
     ${showOwn ? `<label class="own" title="Jag har detta kort"><input type="checkbox" data-own ${full ? 'checked' : ''}>${part ? `<span class="part">${have}/${c.qty}</span>` : ''}</label>` : '<span style="width:1.05rem"></span>'}
     <span class="q">${c.qty}</span>
-    <span class="nm ${info ? '' : 'missing'}" data-open data-img="${esc(info?.image || '')}">${esc(c.name)}${info?.game_changer ? ' <span class="gc" title="Game changer">GC</span>' : ''}${lentQty(c.name) ? ` <span class="lent" title="Utlånat: ${esc(S.loans.filter(l => l.name === c.name).map(l => l.borrower).join(', '))}">↗</span>` : ''}</span>
+    <span class="nm ${info ? '' : 'missing'}" data-open data-img="${esc(ownImg(c.name))}">${esc(c.name)}${info?.game_changer ? ' <span class="gc" title="Game changer">GC</span>' : ''}${lentQty(c.name) ? ` <span class="lent" title="Utlånat: ${esc(S.loans.filter(l => l.name === c.name).map(l => l.borrower).join(', '))}">↗</span>` : ''}${S.shared?.[c.name] ? ` <span class="shared" title="Du har ${S.shared[c.name].own} ex men ${S.shared[c.name].sum} behövs i ${esc(S.shared[c.name].decks.map(x => x.name).join(', '))}">⇄</span>` : ''}</span>
     <span class="mana">${info ? manaHtml(info.mana_cost) : ''}</span>
     <span class="acts">
       ${deck.format === 'commander' && c.board !== 'commander' && info?.commander_ok ? '<button class="icon-btn" data-act="cmd" title="Gör till befälhavare">★</button>' : ''}
@@ -573,7 +596,7 @@ function cardTile(c) {
   const have = owned(c.name), full = have >= c.qty;
   const showOwn = !(S.basicsOwned && BASICS.has(c.name));
   return `<li class="${full ? 'owned' : 'lack'}" data-name="${esc(c.name)}" data-board="${c.board}">
-    ${info?.thumb ? `<img loading="lazy" src="${esc(info.thumb)}" alt="${esc(c.name)}" data-open data-img="${esc(info.image)}">` : `<div class="noimg" data-open>${esc(c.name)}</div>`}
+    ${info?.thumb ? `<img loading="lazy" src="${esc(printOf1(c.name) ? printImg(printOf1(c.name), 'small') : info.thumb)}" alt="${esc(c.name)}" data-open data-img="${esc(ownImg(c.name))}">` : `<div class="noimg" data-open>${esc(c.name)}</div>`}
     ${c.qty > 1 ? `<span class="qbadge">${c.qty}×</span>` : ''}
     ${showOwn ? `<label class="own-badge" title="Jag har detta kort"><input type="checkbox" data-own ${full ? 'checked' : ''}>${!full && have ? `<span>${have}/${c.qty}</span>` : ''}</label>` : ''}
   </li>`;
@@ -591,6 +614,8 @@ function tabList(deck, tab) {
   const visual = S.view === 'bilder';
   const rc = roleCounts(deck);
   const br = deck.format === 'commander' ? bracketInfo(deck) : null;
+  S.shared = sharedShortage();
+  const clash = Object.entries(S.shared).filter(([, x]) => x.decks.some(y => y.id === deck.id)).sort((a, b) => a[0].localeCompare(b[0]));
   const sections = order.filter(k => groups[k]).map(k => {
     const list = groups[k].sort((a, b) => (S.cards[a.name]?.cmc ?? 99) - (S.cards[b.name]?.cmc ?? 99) || a.name.localeCompare(b.name));
     return `<section><div class="section-head"><h3>${TYPE_SV[k] || k}</h3><span class="muted small">${list.reduce((a, c) => a + c.qty, 0)}</span></div>
@@ -611,7 +636,10 @@ function tabList(deck, tab) {
         <div class="card"><h2>Kontroll</h2><ul class="issues">${issues.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul>
           ${br ? `<h3>Bracket</h3><p style="margin:.2rem 0"><b>Ungefär ${br.b} – ${BRACKET_SV[br.b]}</b></p>
             <p class="small muted" style="margin:0">${br.why.length ? esc(br.why.join(', ')) + '.' : 'Inga game changers, kombos med två kort eller massförstörelse av länder.'}
-            ${br.gc.length ? `<br>Game changers: ${esc(br.gc.join(', '))}` : ''}${br.two === null ? `<br><a href="#" id="chkCombos">Kolla kombos</a> för en säkrare bedömning.` : ''}</p>` : ''}</div>
+            ${br.gc.length ? `<br>Game changers: ${esc(br.gc.join(', '))}` : ''}${br.two === null ? `<br><a href="#" id="chkCombos">Kolla kombos</a> för en säkrare bedömning.` : ''}</p>` : ''}
+          ${clash.length ? `<h3>Delas med andra lekar (${clash.length})</h3>
+            <p class="small muted" style="margin:.2rem 0">Korten finns i flera lekar men du har inte så många att alla kan vara ihopplockade samtidigt.</p>
+            <ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${clash.map(([n, x]) => `<li><b>${esc(n)}</b>: har ${x.own}, behövs ${x.sum} – ${esc(x.decks.filter(y => y.id !== deck.id).map(y => y.name).join(', '))}</li>`).join('')}</ul>` : ''}</div>
         <div class="card"><h2>Roller</h2>
           <table class="small"><tbody>${Object.entries(rc).map(([k, v]) => {
             const t = deck.format === 'commander' && ROLE_TARGET[k];
@@ -1165,8 +1193,9 @@ function viewCollection() {
   let show = viewCollection.show || 'alla';
   if (show === 'lan' && !S.v3) show = 'alla';
   const unused = names.filter(n => !used[n]).length;
+  const shared = sharedShortage(), nShared = names.filter(n => shared[n]).length;
   const sortBy = viewCollection.sort || 'namn';
-  const shown = (show === 'oanvanda' ? names.filter(n => !used[n]) : show === 'byte' ? names.filter(n => S.trade[n]) : names.slice())
+  const shown = (show === 'oanvanda' ? names.filter(n => !used[n]) : show === 'delas' ? names.filter(n => shared[n]) : show === 'byte' ? names.filter(n => S.trade[n]) : names.slice())
     .sort({
       varde: (a, b) => colValue(b) - colValue(a),
       senast: (a, b) => (S.colmeta[b]?.added || 0) - (S.colmeta[a]?.added || 0) || a.localeCompare(b),
@@ -1181,15 +1210,15 @@ function viewCollection() {
       <div class="card">
         <div class="row" style="margin-bottom:.6rem"><div class="add-bar" id="colAdd"></div><input type="search" id="colFilter" placeholder="Filtrera…" style="width:160px"></div>
         <div class="row small" style="margin-bottom:.6rem">
-          <div class="seg" id="colShow"><button data-show="alla" class="${show === 'alla' ? 'on' : ''}">Alla</button><button data-show="oanvanda" class="${show === 'oanvanda' ? 'on' : ''}">Används inte i någon lek (${unused})</button>${S.cloud ? `<button data-show="byte" class="${show === 'byte' ? 'on' : ''}">Till byte (${Object.keys(S.trade).length})</button>` : ''}${S.v3 ? `<button data-show="lan" class="${show === 'lan' ? 'on' : ''}">Utlånat (${S.loans.length})</button>` : ''}</div>
+          <div class="seg" id="colShow"><button data-show="alla" class="${show === 'alla' ? 'on' : ''}">Alla</button><button data-show="oanvanda" class="${show === 'oanvanda' ? 'on' : ''}">Används inte i någon lek (${unused})</button>${nShared ? `<button data-show="delas" class="${show === 'delas' ? 'on' : ''}" title="Kort som flera lekar behöver men där du inte har så många att alla kan vara ihopplockade samtidigt">Räcker inte till alla lekar (${nShared})</button>` : ''}${S.cloud ? `<button data-show="byte" class="${show === 'byte' ? 'on' : ''}">Till byte (${Object.keys(S.trade).length})</button>` : ''}${S.v3 ? `<button data-show="lan" class="${show === 'lan' ? 'on' : ''}">Utlånat (${S.loans.length})</button>` : ''}</div>
           ${show !== 'lan' ? `<label>Sortera <select id="colSort">${[['namn', 'Namn'], ['varde', 'Värde'], ...(S.v4 ? [['senast', 'Senast inlagt']] : []), ['antal', 'Antal']].map(([v, l]) => `<option value="${v}" ${sortBy === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>` : ''}</div>
         ${show === 'lan' ? `${S.loans.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th class="num">Antal</th><th>Hos</th><th>Sedan</th><th></th></tr></thead><tbody>${loanRows}</tbody></table></div>` : '<p class="muted">Inga utlånade kort.</p>'}
           <h3>Låna ut ett kort</h3><div class="row"><div class="add-bar" id="loanCard"></div><input type="text" id="loanTo" placeholder="Till vem?" maxlength="60" style="width:140px"><input type="number" id="loanQty" min="1" max="99" value="1" style="width:4rem"></div>
           <p class="muted small">Välj kortet i listan så sparas lånet. Utlånade kort markeras med ↗ i dina lekar.</p>`
         : shown.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>Typ</th><th>I lekar</th><th class="num">Värde</th><th class="num">Antal</th>${S.cloud ? '<th class="num" title="Hur många du kan tänka dig att byta bort. Syns för andra i bytesbörsen.">Till byte</th>' : ''}</tr></thead><tbody>
-          ${shown.map(n => `<tr data-name="${esc(n)}"><td><span data-img="${esc(S.cards[n]?.image || '')}" data-open style="cursor:pointer">${esc(n)}</span>${lentQty(n) ? ' <span class="lent" title="Utlånat">↗</span>' : ''}${foilQty(n) ? ` <span class="foil" title="${foilQty(n)} foil">✦${foilQty(n) > 1 ? foilQty(n) : ''}</span>` : ''}${sortBy === 'senast' && S.colmeta[n]?.added ? `<div class="muted small">${day(S.colmeta[n].added)}</div>` : ''}</td>
+          ${shown.map(n => `<tr data-name="${esc(n)}"><td><span data-img="${esc(ownImg(n))}" data-open style="cursor:pointer">${esc(n)}</span>${lentQty(n) ? ' <span class="lent" title="Utlånat">↗</span>' : ''}${foilQty(n) ? ` <span class="foil" title="${foilQty(n)} foil">✦${foilQty(n) > 1 ? foilQty(n) : ''}</span>` : ''}${sortBy === 'senast' && S.colmeta[n]?.added ? `<div class="muted small">${day(S.colmeta[n].added)}</div>` : ''}</td>
             <td class="muted small">${esc((S.cards[n]?.type_line || '').split(' — ')[0])}</td>
-            <td class="small muted">${used[n] ? esc([...used[n]].join(', ')) : ''}</td>
+            <td class="small muted">${used[n] ? esc([...used[n]].join(', ')) : ''}${shared[n] ? `<div class="warn">⇄ har ${shared[n].own}, behövs ${shared[n].sum}</div>` : ''}</td>
             <td class="num small">${S.cards[n]?.eur || printsOf(n).length ? krE(colValue(n)) : ''}</td>
             <td class="num"><input type="number" min="0" max="999" value="${S.collection[n]}" style="width:4.5rem" data-qty></td>
             ${S.cloud ? `<td class="num"><input type="number" min="0" max="${S.collection[n]}" value="${S.trade[n] || 0}" style="width:4.5rem" data-trade></td>` : ''}</tr>`).join('')}
@@ -1297,6 +1326,23 @@ async function loadPublic(force) {
 }
 const deckTotal = d => d.cards.filter(c => c.board === 'main' || c.board === 'commander').reduce((a, c) => a + c.qty, 0);
 const deckValue = d => d.cards.filter(c => c.board !== 'maybe').reduce((a, c) => a + (S.cards[c.name]?.eur || 0) * c.qty, 0);
+// kort som flera lekar behöver men där samlingen inte räcker till alla samtidigt: { namn: { own, sum, decks: [{ id, name, qty }] } }
+function sharedShortage() {
+  const need = {};
+  for (const d of S.decks) for (const c of d.cards) {
+    if (c.board === 'maybe') continue;
+    const per = (need[c.name] = need[c.name] || {});
+    (per[d.id] = per[d.id] || { id: d.id, name: d.name, qty: 0 }).qty += c.qty;
+  }
+  const out = {};
+  for (const [n, per] of Object.entries(need)) {
+    const decks = Object.values(per);
+    if (decks.length < 2 || (S.basicsOwned && BASICS.has(n)) || S.cards[n]?.any_number) continue;
+    const sum = decks.reduce((a, x) => a + x.qty, 0), own = owned(n) - lentQty(n);
+    if (own > 0 && own < sum) out[n] = { own, sum, decks };
+  }
+  return out;
+}
 // andel av lekens kort (exkl. kanske) som finns i samlingen
 function ownedShare(d) {
   let need = 0, have = 0;
@@ -1813,7 +1859,10 @@ function scanModal() {
 }
 
 // ---------- livräknare ----------
+// Lokalt: en telefon mitt på bordet. Delad (molnläge): alla ansluter med en kod och ser samma räknare.
+// Ändringar skickas som tillägg (+1, −3 …) över Supabase Realtime, så de kan komma i vilken ordning som helst.
 const LIFE_KEY = 'lv-life';
+const CID = Math.random().toString(36).slice(2, 10); // den här fliken
 function lifeState() {
   if (!lifeState.s) { try { lifeState.s = JSON.parse(localStorage.getItem(LIFE_KEY)); } catch {} }
   return lifeState.s;
@@ -1827,9 +1876,117 @@ async function wakeLock(on) {
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && location.hash.startsWith('#/liv') && lifeState()?.players) wakeLock(true); });
 const isOut = (p, s) => p.life <= 0 || p.poison >= 10 || s.players.some((_, j) => (p.cmd[j] || 0) >= 21);
-function viewLife() {
-  setNav('matcher');
+const roomCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 32]).join('');
+const shared = ['setup', 'start', 'players', 'seats'];
+
+// ---- delad räknare ----
+const room = { ch: null, code: '', peers: new Set() };
+function roomSend(msg) { room.ch?.send({ type: 'broadcast', event: 'm', payload: { ...msg, from: CID } }); }
+function roomJoin(code) {
+  if (!window.LV_CHANNEL) return false;
+  if (room.code === code && room.ch) return true;
+  roomLeave();
+  room.code = code; room.peers = new Set();
+  // ny anslutning: ta emot de andras läge om någon svarar (vi kan ha missat ändringar)
+  const s = lifeState(); if (s?.players) { s.synced = false; saveLife(); }
+  room.ch = window.LV_CHANNEL('lv-life-' + code);
+  room.ch.on('broadcast', { event: 'm' }, ({ payload }) => roomMsg(payload));
+  room.ch.subscribe(st => { if (st === 'SUBSCRIBED') roomSend({ t: 'hello' }); });
+  return true;
+}
+function roomLeave() { if (room.ch) { try { room.ch.unsubscribe(); } catch {} } room.ch = null; room.code = ''; }
+function applyOp(s, op) {
+  s.applied = s.applied || [];
+  if (s.applied.includes(op.id)) return false;
+  s.applied.push(op.id); if (s.applied.length > 400) s.applied.splice(0, 100);
+  const p = s.players[op.p]; if (!p) return false;
+  if (op.k === 'life') p.life += op.d;
+  else if (op.k === 'poison') p.poison = Math.max(0, p.poison + op.d);
+  else if (op.k === 'cmd') { p.cmd[op.j] = Math.max(0, (p.cmd[op.j] || 0) + op.d); p.life -= op.d; }
+  return true;
+}
+// en ändring härifrån: gör den direkt och skicka den till de andra
+function lifeOp(p, k, d, j) {
   const s = lifeState();
+  const op = { id: CID + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), p, k, d, j };
+  if (k === 'cmd') { const before = s.players[p].cmd[j] || 0; op.d = Math.max(0, before + d) - before; if (!op.d) return; }
+  applyOp(s, op); saveLife();
+  if (s.room) roomSend({ t: 'op', op });
+}
+function roomMsg(m) {
+  const s = lifeState();
+  if (!s || m.from === CID) return;
+  room.peers.add(m.from);
+  if (m.t === 'hello') {
+    if (s.players && s.room === room.code) roomSend({ t: 'state', to: m.from, state: Object.fromEntries(shared.map(k => [k, s[k]])), applied: s.applied || [] });
+    return updateRoomBar();
+  }
+  if (m.t === 'state' && m.to === CID) {
+    if (s.synced) return;
+    Object.assign(s, m.state, { applied: m.applied, synced: true }); saveLife();
+    if (s.me == null || !s.players[s.me]) return location.hash.startsWith('#/liv') ? render() : null;
+    return lifeRedraw();
+  }
+  if (!s.players || s.room !== room.code) return;
+  if (m.t === 'op') { if (applyOp(s, m.op)) { saveLife(); lifeRedraw(); } return; }
+  if (m.t === 'seat') { s.seats = s.seats || {}; s.seats[m.p] = m.from; if (m.name) s.players[m.p].name = m.name; saveLife(); return lifeRedraw(); }
+  if (m.t === 'reset') { Object.assign(s, m.state, { applied: [] }); saveLife(); toast('Matchen började om'); return lifeRedraw(); }
+  if (m.t === 'end') return lifeFinish(m.win, m.by);
+}
+function updateRoomBar() { const el = $('#lPeers'); if (el) el.textContent = room.peers.size ? `${room.peers.size + 1} anslutna` : 'väntar på de andra…'; }
+// rita om bara siffrorna, så att pågående tryck inte avbryts
+function lifeRedraw() {
+  const s = lifeState();
+  if (!location.hash.startsWith('#/liv') || !s?.players || !$('.life')) return;
+  if ($$('.pl').length !== s.players.length) return render();
+  s.players.forEach((p, i) => {
+    const pl = $(`.pl[data-p="${i}"]`); if (!pl) return;
+    $('.lifeval', pl).textContent = p.life;
+    $('.pname', pl).textContent = p.name;
+    $('.extra', pl).innerHTML = lifeExtra(p, s);
+    pl.classList.toggle('out', isOut(p, s));
+  });
+  if (!$('#modal').hidden && lifeMore.i != null) lifeMore(lifeMore.i);
+}
+const lifeExtra = (p, s) => `${p.poison ? `<span title="Gift">☠ ${p.poison}</span>` : ''}${s.players.map((_, j) => p.cmd[j] ? `<span title="Befälhavarskada från ${esc(s.players[j].name)}">⚔ ${esc(s.players[j].name.slice(0, 8))} ${p.cmd[j]}</span>` : '').join('')}`;
+
+function viewLife(code) {
+  setNav('matcher');
+  let s = lifeState();
+  // anslut till en delad räknare via länk eller kod
+  if (code && (!s || s.room !== code)) {
+    if (!window.LV_CHANNEL) { $('#app').innerHTML = '<div class="card empty">Delad livräknare kräver molnversionen och inloggning.</div>'; return; }
+    lifeState.s = s = { room: code, synced: false, me: null, myDeck: s?.myDeck || s?.setup?.deck || '' };
+    saveLife();
+  }
+  if (s?.room) roomJoin(s.room);
+  if (s?.room && !s.players) {
+    document.body.classList.remove('life-on');
+    $('#app').innerHTML = `<div class="card" style="max-width:520px;margin:0 auto"><h1>Ansluter till ${esc(s.room)}…</h1>
+      <p class="muted">Väntar på att någon vid bordet skickar räknaren. Den som startade matchen behöver ha appen öppen.</p>
+      <button class="btn" id="lQuit">Avbryt</button></div>`;
+    clearTimeout(viewLife.t); viewLife.t = setTimeout(() => { if (!lifeState()?.players && room.ch) roomSend({ t: 'hello' }); }, 3000);
+    $('#lQuit').onclick = () => { roomLeave(); lifeState.s = { setup: s.setup }; saveLife(); location.hash = '#/matcher'; };
+    return;
+  }
+  // välj vilken spelare man är (delad räknare)
+  if (s?.room && s.players && (s.me == null || !s.players[s.me])) {
+    document.body.classList.remove('life-on');
+    const taken = s.seats || {};
+    $('#app').innerHTML = `<div class="card" style="max-width:520px;margin:0 auto"><h1>Vem är du?</h1>
+      <div class="grid">${s.players.map((p, i) => `<button class="btn" data-seat="${i}">${esc(p.name)}${taken[i] && taken[i] !== CID ? ' <span class="muted small">(vald av någon)</span>' : ''}</button>`).join('')}</div>
+      <p><label class="small">Ditt namn<br><input type="text" id="lMyName" maxlength="20" placeholder="Lämna tomt för att behålla" style="width:100%" value="${esc(S.profile?.name || '')}"></label></p>
+      <p><label class="small">Min lek (för spelloggen)<br><select id="lDeck" style="width:100%"><option value="">Logga inte matchen</option>${S.decks.map(d => `<option value="${d.id}" ${d.id === s.myDeck ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label></p></div>`;
+    $('#app').onclick = e => {
+      const b = e.target.closest('[data-seat]'); if (!b) return;
+      $('#app').onclick = null;
+      const i = +b.dataset.seat, name = $('#lMyName').value.trim();
+      s.me = i; s.myDeck = $('#lDeck').value; s.seats = { ...(s.seats || {}), [i]: CID };
+      if (name) s.players[i].name = name;
+      saveLife(); roomSend({ t: 'seat', p: i, name }); render();
+    };
+    return;
+  }
   if (!s || !s.players) {
     document.body.classList.remove('life-on');
     const last = s?.setup || { n: 4, life: 40, names: ['Jag', '', '', '', '', ''], deck: S.decks[0]?.id || '' };
@@ -1838,36 +1995,43 @@ function viewLife() {
         <label class="small">Startliv<br><select id="lL">${[40, 30, 25, 20].map(n => `<option ${n === last.life ? 'selected' : ''}>${n}</option>`).join('')}</select></label></p>
       <div id="lNames"></div>
       <p><label class="small">Min lek (för spelloggen)<br><select id="lDeck" style="width:100%"><option value="">Logga inte matchen</option>${S.decks.map(d => `<option value="${d.id}" ${d.id === last.deck ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label></p>
+      ${window.LV_CHANNEL ? `<p><label class="small"><input type="checkbox" id="lShare" ${last.share ? 'checked' : ''}> Dela räknaren – alla vid bordet ser och ändrar den i sina egna telefoner</label></p>` : ''}
       <p class="row"><span class="spacer"></span><button class="btn primary" id="lGo">Starta</button></p>
+      ${window.LV_CHANNEL ? `<h3>Gå med i någon annans räknare</h3><div class="row"><input type="text" id="lCode" maxlength="6" placeholder="Kod, t.ex. K7Q2XM" style="text-transform:uppercase;width:9rem"><button class="btn" id="lJoin">Gå med</button></div>` : ''}
       <p class="muted small">Skärmen hålls tänd medan räknaren är öppen. Liv, gift och befälhavarskada sparas i telefonen om sidan laddas om.</p></div>`;
     const names = () => { const n = +$('#lN').value; $('#lNames').innerHTML = Array.from({ length: n }, (_, i) => `<p><input type="text" data-pn="${i}" maxlength="20" placeholder="Spelare ${i + 1}" value="${esc(last.names[i] || '')}" style="width:100%"></p>`).join(''); };
     names(); $('#lN').onchange = names;
     $('#lDeck').onchange = e => { const d = S.decks.find(x => x.id === e.target.value); if (d) $('#lL').value = d.format === 'modern' ? '20' : '40'; };
+    if ($('#lJoin')) $('#lJoin').onclick = () => { const c = $('#lCode').value.trim().toUpperCase(); if (/^[A-Z0-9]{6}$/.test(c)) location.hash = '#/liv/' + c; else toast('Koden är 6 tecken'); };
     $('#lGo').onclick = () => {
-      const n = +$('#lN').value, life = +$('#lL').value;
+      const n = +$('#lN').value, life = +$('#lL').value, share = !!$('#lShare')?.checked;
       const nm = $$('[data-pn]').map((i, k) => i.value.trim() || `Spelare ${k + 1}`);
-      lifeState.s = { setup: { n, life, names: nm, deck: $('#lDeck').value }, start: Date.now(), players: nm.map(name => ({ name, life, poison: 0, cmd: {} })) };
-      saveLife(); render();
+      lifeState.s = { setup: { n, life, names: nm, deck: $('#lDeck').value, share }, start: Date.now(), players: nm.map(name => ({ name, life, poison: 0, cmd: {} })), applied: [] };
+      if (share) Object.assign(lifeState.s, { room: roomCode(), me: 0, myDeck: $('#lDeck').value, synced: true, seats: { 0: CID } });
+      saveLife();
+      if (share) { roomJoin(lifeState.s.room); location.hash = '#/liv/' + lifeState.s.room; } else render();
     };
     return;
   }
   document.body.classList.add('life-on');
   wakeLock(true);
-  const n = s.players.length;
-  const top = n === 2 ? 1 : Math.floor(n / 2);
-  $('#app').innerHTML = `<div class="life n${n}">${s.players.map((p, i) => `
-    <div class="pl ${i < top ? 'flip' : ''} ${isOut(p, s) ? 'out' : ''}" data-p="${i}">
+  const n = s.players.length, sh = !!s.room;
+  // en telefon mitt på bordet: övre halvan vänds mot spelarna på andra sidan. Delad: ingen vänds, min spelare först.
+  const top = sh ? 0 : n === 2 ? 1 : Math.floor(n / 2);
+  $('#app').innerHTML = `<div class="life n${n} ${sh ? 'shared' : ''}">${s.players.map((p, i) => `
+    <div class="pl ${i < top ? 'flip' : ''} ${isOut(p, s) ? 'out' : ''} ${sh && i === s.me ? 'mine' : ''}" data-p="${i}">
       <div class="pname">${esc(p.name)}</div>
       <button class="hit minus" data-d="-1" aria-label="Minus ett liv"></button><button class="hit plus" data-d="1" aria-label="Plus ett liv"></button>
       <div class="lifeval">${p.life}</div>
-      <div class="extra">${p.poison ? `<span title="Gift">☠ ${p.poison}</span>` : ''}${s.players.map((_, j) => p.cmd[j] ? `<span title="Befälhavarskada från ${esc(s.players[j].name)}">⚔ ${esc(s.players[j].name.slice(0, 8))} ${p.cmd[j]}</span>` : '').join('')}</div>
+      <div class="extra">${lifeExtra(p, s)}</div>
       <button class="more" data-more aria-label="Gift och befälhavarskada">⋯</button>
     </div>`).join('')}
-    <div class="lbar"><button class="btn small" id="lEnd">Avsluta</button><button class="btn small" id="lReset">Börja om</button><button class="btn small" id="lExit">Stäng</button></div></div>`;
+    <div class="lbar">${sh ? `<button class="btn small" id="lInvite" title="Bjud in de andra">Kod ${esc(s.room)}</button><span class="small" id="lPeers" style="color:#aaa"></span>` : ''}<button class="btn small" id="lEnd">Avsluta</button><button class="btn small" id="lReset">Börja om</button><button class="btn small" id="lExit">Stäng</button></div></div>`;
+  updateRoomBar();
   const life = $('.life');
   // håll inne = ±10 i taget
   let hold, held;
-  const change = (i, d) => { const p = s.players[i]; p.life += d; saveLife(); const pl = $(`.pl[data-p="${i}"]`); $('.lifeval', pl).textContent = p.life; pl.classList.toggle('out', isOut(p, s)); };
+  const change = (i, d) => { lifeOp(i, 'life', d); lifeRedraw(); };
   life.addEventListener('pointerdown', e => {
     const b = e.target.closest('.hit'); if (!b) return;
     const i = +b.closest('.pl').dataset.p, d = +b.dataset.d;
@@ -1882,12 +2046,26 @@ function viewLife() {
     const m = e.target.closest('[data-more]');
     if (m) return lifeMore(+m.closest('.pl').dataset.p);
   });
-  $('#lReset').onclick = () => { if (!confirm('Börja om med samma spelare?')) return; for (const p of s.players) Object.assign(p, { life: s.setup.life, poison: 0, cmd: {} }); s.start = Date.now(); saveLife(); render(); };
+  if ($('#lInvite')) $('#lInvite').onclick = async () => {
+    const url = location.origin + location.pathname + '#/liv/' + s.room;
+    try {
+      if (navigator.share) await navigator.share({ title: 'Livräknare', text: 'Gå med i livräknaren, kod ' + s.room, url });
+      else { await navigator.clipboard.writeText(url); toast('Länken är kopierad – skicka den till de andra'); }
+    } catch {}
+  };
+  $('#lReset').onclick = () => {
+    if (!confirm('Börja om med samma spelare?')) return;
+    for (const p of s.players) Object.assign(p, { life: s.setup.life, poison: 0, cmd: {} });
+    s.start = Date.now(); s.applied = []; saveLife();
+    if (sh) roomSend({ t: 'reset', state: Object.fromEntries(shared.map(k => [k, s[k]])) });
+    render();
+  };
   $('#lExit').onclick = () => { wakeLock(false); document.body.classList.remove('life-on'); location.hash = '#/matcher'; };
   $('#lEnd').onclick = () => lifeEnd();
 }
 function lifeMore(i) {
   const s = lifeState(), p = s.players[i];
+  lifeMore.i = i;
   const row = (label, key, j) => `<div class="row" style="justify-content:space-between"><span>${label}</span><span class="row"><button class="btn small" data-k="${key}" data-j="${j ?? ''}" data-d="-1">−</button><b style="min-width:2rem;text-align:center">${key === 'poison' ? p.poison : p.cmd[j] || 0}</b><button class="btn small" data-k="${key}" data-j="${j ?? ''}" data-d="1">+</button></span></div>`;
   openModal(`<div class="row"><h2 style="margin:0">${esc(p.name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
     <h3>Gift</h3>${row('☠ Giftmarkörer (10 = ute)', 'poison')}
@@ -1895,40 +2073,258 @@ function lifeMore(i) {
     <p class="muted small">Befälhavarskada drar också av liv.</p>`, box => {
     box.onclick = e => {
       const b = e.target.closest('[data-k]'); if (!b) return;
-      const d = +b.dataset.d;
-      if (b.dataset.k === 'poison') p.poison = Math.max(0, p.poison + d);
-      else { const j = +b.dataset.j, before = p.cmd[j] || 0, after = Math.max(0, before + d); p.cmd[j] = after; p.life -= after - before; }
-      saveLife(); lifeMore(i); render();
+      lifeOp(i, b.dataset.k, +b.dataset.d, b.dataset.k === 'cmd' ? +b.dataset.j : undefined);
+      lifeMore(i); lifeRedraw();
     };
   });
 }
 function lifeEnd() {
   const s = lifeState();
   const alive = s.players.map((p, i) => ({ p, i })).filter(x => !isOut(x.p, s));
+  const myDeck = s.room ? s.myDeck : s.setup.deck;
   openModal(`<div class="row"><h2 style="margin:0">Vem vann?</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
     <div class="grid" style="margin-top:.6rem">${s.players.map((p, i) => `<button class="btn ${alive.length === 1 && alive[0].i === i ? 'primary' : ''}" data-win="${i}">${esc(p.name)}</button>`).join('')}<button class="btn" data-win="draw">Oavgjort</button></div>
-    <p class="muted small">${s.setup.deck ? 'Matchen sparas i spelloggen med din lek.' : 'Ingen lek vald, matchen sparas inte i spelloggen.'}</p>
+    <p class="muted small">${myDeck ? 'Matchen sparas i spelloggen med din lek.' : 'Ingen lek vald, matchen sparas inte i spelloggen.'}${s.room ? ' Matchen avslutas för alla vid bordet, och var och en sparar den i sin egen spellogg.' : ''}</p>
     <div class="row" style="margin-top:.8rem"><span class="spacer"></span><button class="btn small" id="lAbort">Avbryt matchen utan resultat</button></div>`, box => {
     $('#lAbort', box).onclick = () => {
       if (!confirm('Avbryta matchen? Den sparas inte i spelloggen.')) return;
-      lifeState.s = { setup: s.setup }; saveLife(); closeModal(); wakeLock(false); document.body.classList.remove('life-on'); location.hash = '#/matcher';
-      toast('Matchen avbröts');
+      if (s.room) roomSend({ t: 'end', win: null, by: s.players[s.me]?.name });
+      lifeFinish(null);
     };
-    box.onclick = async e => {
+    box.onclick = e => {
       const b = e.target.closest('[data-win]'); if (!b) return;
-      const w = b.dataset.win, d = S.decks.find(x => x.id === s.setup.deck);
-      if (d) {
-        const result = w === 'draw' ? 'draw' : +w === 0 ? 'win' : 'loss';
-        const mins = Math.round((Date.now() - s.start) / 60000);
-        try {
-          const g = await api('/api/games', { method: 'POST', body: { deck_id: d.id, deck_name: d.name, result, players: s.players.length,
-            opponents: s.players.slice(1).map(p => p.name).join(', '), notes: `Livräknare: ${w === 'draw' ? 'oavgjort' : s.players[+w].name + ' vann'}, ${mins} min` } });
-          S.games.unshift(g); toast('Matchen är sparad');
-        } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
-      }
-      lifeState.s = { setup: s.setup }; saveLife(); closeModal(); wakeLock(false); document.body.classList.remove('life-on'); location.hash = '#/matcher';
+      if (s.room) roomSend({ t: 'end', win: b.dataset.win, by: s.players[s.me]?.name });
+      lifeFinish(b.dataset.win);
     };
   });
+}
+// matchen är slut (här eller hos någon annan vid bordet): spara i egen spellogg och stäng
+async function lifeFinish(w, by) {
+  const s = lifeState();
+  if (!s?.players) return;
+  const me = s.room ? s.me : 0, d = S.decks.find(x => x.id === (s.room ? s.myDeck : s.setup.deck));
+  if (w != null && d && me != null) {
+    const result = w === 'draw' ? 'draw' : +w === me ? 'win' : 'loss';
+    const mins = Math.round((Date.now() - s.start) / 60000);
+    try {
+      const g = await api('/api/games', { method: 'POST', body: { deck_id: d.id, deck_name: d.name, result, players: s.players.length,
+        opponents: s.players.filter((_, i) => i !== me).map(p => p.name).join(', '), notes: `Livräknare: ${w === 'draw' ? 'oavgjort' : s.players[+w].name + ' vann'}, ${mins} min` } });
+      S.games.unshift(g); toast('Matchen är sparad');
+    } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
+  } else if (by) toast(w == null ? `${by} avbröt matchen` : 'Matchen är slut');
+  else if (w == null) toast('Matchen avbröts');
+  roomLeave();
+  lifeState.s = { setup: s.setup, myDeck: s.myDeck }; saveLife();
+  if (!location.hash.startsWith('#/liv')) return;
+  closeModal(); wakeLock(false); document.body.classList.remove('life-on');
+  location.hash = '#/matcher';
+}
+
+// ---------- regler ----------
+const RULES_SV = {
+  commander: `<h2>Commander i korthet</h2>
+    <ul>
+      <li><b>Leken:</b> exakt 100 kort inklusive befälhavaren. Bara ett exemplar av varje kort, utom basländer och kort som säger något annat (t.ex. Relentless Rats).</li>
+      <li><b>Befälhavaren:</b> en legendarisk varelse, eller ett kort där det står att det kan vara befälhavare. Två befälhavare går bara med t.ex. <i>Partner</i>, <i>Friends forever</i>, <i>Choose a Background</i> eller <i>Doctor's companion</i>.</li>
+      <li><b>Färgidentitet:</b> alla kort i leken måste hålla sig inom befälhavarens färgidentitet. Den räknas från manakostnaden <i>och</i> manasymboler i regeltexten.</li>
+      <li><b>Start:</b> 40 liv. Befälhavaren börjar i <i>command zone</i>, utanför leken.</li>
+      <li><b>Commander tax:</b> du kan spela befälhavaren från command zone. Den kostar {2} mer för varje gång du redan spelat den därifrån.</li>
+      <li><b>Tillbaka till command zone:</b> om befälhavaren skulle hamna på kyrkogården, i exil, på handen eller i biblioteket får du flytta den till command zone i stället.</li>
+      <li><b>Befälhavarskada:</b> en spelare som fått 21 stridsskada från samma befälhavare under matchen förlorar.</li>
+      <li><b>Mulligan:</b> London-mulligan (dra 7, lägg lika många kort som du tagit mulligan under biblioteket). I multiplayer är första mulligan gratis.</li>
+      <li><b>Förlust:</b> 0 liv, 10 giftmarkörer, 21 befälhavarskada, eller att du ska dra ur ett tomt bibliotek.</li>
+      <li><b>Multiplayer:</b> alla mot alla. Du får attackera vilka motståndare du vill, och fördela anfallarna mellan dem.</li>
+    </ul>`,
+  turn: `<h2>Turens delar</h2>
+    <ol>
+      <li><b>Början:</b> <i>untap</i> (vänd upp dina kort), <i>upkeep</i> (förmågor som triggar "at the beginning of your upkeep"), <i>draw</i> (dra ett kort). I en match med två spelare drar den som börjar inget kort första turen. I multiplayer drar alla.</li>
+      <li><b>Första huvudfasen:</b> spela länder (ett per tur), varelser, sorceries och andra kort.</li>
+      <li><b>Strid:</b> början på striden → välj anfallare → försvararen väljer blockerare → skada (first strike delar ut skada före övriga) → slut på striden.</li>
+      <li><b>Andra huvudfasen:</b> samma som den första.</li>
+      <li><b>Slut:</b> <i>end step</i> (förmågor som triggar "at the beginning of the end step"), sedan <i>cleanup</i>: släng ner till 7 kort på handen, skada på varelser försvinner och "until end of turn"-effekter tar slut.</li>
+    </ol>
+    <h2>Stacken och prioritet</h2>
+    <ul>
+      <li>Spells och förmågor läggs på <b>stacken</b>. Alla får chans att svara (prioritet). Det som lades sist löses först.</li>
+      <li><b>Instants</b> och förmågor kan spelas när du har prioritet, även på andras tur. Sorceries, varelser och liknande bara i din egen huvudfas när stacken är tom.</li>
+      <li><b>Manaförmågor</b> (t.ex. att tappa ett land för mana) går inte via stacken och kan inte svaras på.</li>
+      <li><b>Triggade förmågor</b> ("when", "whenever", "at") läggs på stacken nästa gång någon skulle få prioritet. Triggar flera samtidigt väljer varje spelare ordningen på sina egna.</li>
+      <li>Ett spell som motverkas (<i>countered</i>) gör ingenting och läggs på kyrkogården.</li>
+    </ul>`,
+  brackets: `<h2>Commander Brackets</h2>
+    <p class="muted">Wizards indelning för att hitta jämna matcher. Prata alltid ihop er före matchen – siffran är en hjälp, inte en regel.</p>
+    <table><tbody>
+      <tr><td><b>1</b></td><td><b>Exhibition</b> – tema och skoj före styrka. Inga game changers, ingen massförstörelse av länder, inga kombos med två kort, inga extra turer i följd.</td></tr>
+      <tr><td><b>2</b></td><td><b>Core</b> – ungefär som en förbyggd lek från butiken. Inga game changers, ingen massförstörelse av länder, inga kombos med två kort, inga extra turer i följd.</td></tr>
+      <tr><td><b>3</b></td><td><b>Upgraded</b> – genomtänkta och uppgraderade lekar. Högst 3 game changers, ingen massförstörelse av länder, inga kombos med två kort tidigt i matchen, inga extra turer i följd.</td></tr>
+      <tr><td><b>4</b></td><td><b>Optimized</b> – så starkt som möjligt, bara banlistan gäller.</td></tr>
+      <tr><td><b>5</b></td><td><b>cEDH</b> – turneringsnivå med metan i fokus.</td></tr>
+    </tbody></table>
+    <p class="small muted">Lekverkstan uppskattar bracket under Lista → Kontroll i varje Commander-lek.</p>`,
+};
+// vanliga nyckelord: engelska namnet (som på korten) och en kort förklaring
+const KEYWORDS = [
+  ['Flying', 'Kan bara blockeras av varelser med flying eller reach.'],
+  ['Reach', 'Kan blockera varelser med flying.'],
+  ['Trample', 'Skada utöver det som dödar blockerarna går vidare till spelaren (eller planeswalkern) som anfölls.'],
+  ['Deathtouch', 'All skada från den här varelsen räcker för att döda en varelse, även 1 skada.'],
+  ['Lifelink', 'Skada som varelsen gör ger dig lika mycket liv.'],
+  ['First strike', 'Gör stridsskada före varelser utan first strike.'],
+  ['Double strike', 'Gör stridsskada två gånger: både med first strike och i vanlig ordning.'],
+  ['Vigilance', 'Tappas inte när den anfaller.'],
+  ['Haste', 'Kan anfalla och använda tap-förmågor samma tur som den kom in.'],
+  ['Menace', 'Kan bara blockeras av två eller fler varelser.'],
+  ['Defender', 'Kan inte anfalla.'],
+  ['Flash', 'Kan spelas när du kan spela en instant.'],
+  ['Hexproof', 'Kan inte bli mål för motståndarnas spells eller förmågor.'],
+  ['Shroud', 'Kan inte bli mål för några spells eller förmågor, inte ens dina egna.'],
+  ['Ward', 'När den blir mål för en motståndares spell eller förmåga motverkas det, om inte motståndaren betalar ward-kostnaden.'],
+  ['Indestructible', 'Förstörs inte av "destroy" eller dödlig skada. Kan fortfarande offras, exilas eller dö av −X/−X.'],
+  ['Protection', '"Protection from X": kan inte skadas, förtrollas, blockeras eller bli mål av något som är X.'],
+  ['Equip', 'Betala kostnaden för att fästa utrustningen på en egen varelse. Bara när du kan spela en sorcery.'],
+  ['Cascade', 'När du spelar kortet: vänd kort från biblioteket tills du hittar ett som inte är land med lägre manavärde. Du får spela det gratis.'],
+  ['Convoke', 'Varje varelse du tappar betalar {1} eller en mana i varelsens färg.'],
+  ['Cycling', 'Betala kostnaden och släng kortet från handen för att dra ett nytt.'],
+  ['Kicker', 'En extra kostnad du kan välja att betala för en starkare effekt.'],
+  ['Flashback', 'Kan spelas från kyrkogården för flashback-kostnaden. Exilas sedan.'],
+  ['Scry', '"Scry N": titta på de N översta korten i biblioteket och lägg valfria under, resten tillbaka i valfri ordning.'],
+  ['Surveil', '"Surveil N": titta på de N översta korten och lägg valfria på kyrkogården, resten tillbaka i valfri ordning.'],
+  ['Mill', '"Mill N": lägg de N översta korten i biblioteket på kyrkogården.'],
+  ['Proliferate', 'Välj valfritt antal permanenter och spelare och ge dem ett extra av varje sorts markör de redan har.'],
+  ['Treasure', 'Token-artefakt: tappa och offra den för en mana i valfri färg.'],
+  ['Clue', 'Token-artefakt: betala {2} och offra den för att dra ett kort. "Investigate" skapar en.'],
+  ['Food', 'Token-artefakt: betala {2}, tappa och offra den för 3 liv.'],
+  ['Landfall', 'Triggar när ett land kommer in under din kontroll.'],
+  ['Storm', 'När du spelar kortet kopieras det en gång för varje annat spell som spelats tidigare under turen.'],
+  ['Affinity', '"Affinity for artifacts": kostar {1} mindre för varje artefakt du kontrollerar.'],
+  ['Delve', 'Varje kort du exilar från kyrkogården betalar {1} av kostnaden.'],
+  ['Crew', '"Crew N": tappa varelser med sammanlagd styrka N eller mer så blir fordonet en varelse tills turen är slut.'],
+  ['Annihilator', '"Annihilator N": när varelsen anfaller offrar försvarande spelare N permanenter.'],
+  ['Exile', 'Kortet läggs utanför spelet. Det är inte på kyrkogården och kan bara komma tillbaka om något säger det.'],
+  ['Sacrifice', 'Offra: lägg en egen permanent på kyrkogården. Kan inte stoppas av indestructible.'],
+  ['Counter', 'Motverka ett spell eller en förmåga på stacken, så att det inte gör något.'],
+  ['Token', 'En permanent som inte är ett kort. Försvinner om den lämnar slagfältet.'],
+  ['Summoning sickness', 'En varelse kan inte anfalla eller använda tap-förmågor förrän du kontrollerat den sedan början av din senaste tur (se Haste).'],
+  ['Legend rule', 'Har du två legendariska permanenter med samma namn väljer du en att behålla och lägger den andra på kyrkogården.'],
+  ['ETB', '"Enters the battlefield" – när kortet kommer in på slagfältet.'],
+  ['Dies', 'När en varelse läggs från slagfältet på kyrkogården.'],
+];
+
+// regelboken hämtas en gång och sparas i webbläsarens cache i 30 dagar
+async function loadRules() {
+  if (loadRules.r) return loadRules.r;
+  let data;
+  try {
+    const c = await caches.open('lv-rules'), hit = await c.match('rules');
+    if (hit) { const j = await hit.json(); if (Date.now() - j.at < 30 * 864e5) data = j; }
+  } catch {}
+  if (!data) {
+    data = { ...(await api('/api/rules')), at: Date.now() };
+    try { await (await caches.open('lv-rules')).put('rules', new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } })); } catch {}
+  }
+  return (loadRules.r = { ...parseRules(data.text), url: data.url });
+}
+function parseRules(text) {
+  const lines = text.replace(/\r/g, '').split('\n');
+  const effective = (text.match(/These rules are effective as of ([^.]+)\./) || [])[1] || '';
+  // innehållsförteckningen upprepar rubrikerna: själva reglerna börjar vid andra "Glossary"-fria förekomsten av 100.1.
+  const start = lines.findIndex(l => /^100\.1\. /.test(l));
+  const gStart = lines.findIndex((l, i) => i > start && /^Glossary\s*$/.test(l));
+  const gEnd = lines.findIndex((l, i) => i > gStart && /^Credits\s*$/.test(l));
+  const rules = [], sections = {};
+  let sec = '';
+  for (let i = Math.max(0, start - 6); i < (gStart > 0 ? gStart : lines.length); i++) {
+    const l = lines[i].trim(); if (!l) continue;
+    let m;
+    if ((m = l.match(/^(\d)\. (.+)$/))) { sections[m[1]] = m[2]; continue; }
+    if ((m = l.match(/^(\d{3})\. (.+)$/))) { sec = m[1]; sections[sec] = m[2]; continue; }
+    if ((m = l.match(/^(\d{3}\.\d+[a-z]?)\.? (.+)$/))) { rules.push({ n: m[1], t: m[2], sec }); continue; }
+    if (rules.length) rules[rules.length - 1].t += '\n' + l; // t.ex. "Example: …"
+  }
+  const glossary = [];
+  if (gStart > 0) {
+    let cur = null;
+    for (let i = gStart + 1; i < (gEnd > 0 ? gEnd : lines.length); i++) {
+      const l = lines[i].trim();
+      if (!l) { cur = null; continue; }
+      if (!cur) { cur = { term: l, t: '' }; glossary.push(cur); } else cur.t += (cur.t ? '\n' : '') + l;
+    }
+  }
+  return { rules, sections, glossary, effective };
+}
+const ruleLinks = t => esc(t).replace(/\b(\d{3}\.\d+[a-z]?)\b/g, '<a href="#" data-rule="$1">$1</a>').replace(/\n/g, '<br>');
+function hiliteRule(html, words) {
+  for (const w of words) if (w.length > 2) html = html.replace(new RegExp('(?![^<]*>)(' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>');
+  return html;
+}
+
+function viewRules(sub) {
+  setNav('regler');
+  const tabs = [['commander', 'Commander'], ['tur', 'Turen och stacken'], ['brackets', 'Brackets'], ['ord', 'Ordlista'], ['bok', 'Regelboken'], ['bannade', 'Bannade kort']];
+  sub = tabs.some(t => t[0] === sub) ? sub : 'commander';
+  $('#app').innerHTML = `<div class="row"><h1>Regler</h1></div>
+    <div class="tabs">${tabs.map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/regler/${k}">${l}</a>`).join('')}</div><div id="rl"></div>`;
+  const rl = $('#rl');
+  if (sub === 'commander' || sub === 'tur' || sub === 'brackets') {
+    rl.innerHTML = `<div class="card rules" style="max-width:820px">${RULES_SV[sub === 'tur' ? 'turn' : sub]}
+      <p class="small muted">Förenklad sammanfattning. Det exakta står i <a href="#/regler/bok">regelboken</a>.</p></div>`;
+    return;
+  }
+  if (sub === 'ord') {
+    const q = (viewRules.oq || '').toLowerCase();
+    const mine = KEYWORDS.filter(([k, t]) => !q || k.toLowerCase().includes(q) || t.toLowerCase().includes(q));
+    const gl = q && loadRules.r ? loadRules.r.glossary.filter(g => g.term.toLowerCase().includes(q)).slice(0, 30) : [];
+    rl.innerHTML = `<div class="card" style="max-width:820px">
+      <input type="search" id="oq" placeholder="Sök ett ord, t.ex. trample eller ward…" value="${esc(viewRules.oq || '')}" style="width:100%">
+      ${mine.length ? `<table class="small" style="margin-top:.6rem"><tbody>${mine.map(([k, t]) => `<tr><td style="white-space:nowrap"><b>${esc(k)}</b></td><td>${esc(t)}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${q ? (loadRules.r ? (gl.length ? `<h3>I regelbokens ordlista (engelska)</h3>${gl.map(g => `<p class="small"><b>${esc(g.term)}</b><br>${ruleLinks(g.t)}</p>`).join('')}` : (mine.length ? '' : '<p class="muted">Inga träffar.</p>'))
+        : '<p class="muted small">Hämtar regelbokens ordlista…</p>') : '<p class="muted small">Skriv ett ord för att även söka i regelbokens hela ordlista.</p>'}</div>`;
+    const inp = $('#oq');
+    inp.oninput = () => { viewRules.oq = inp.value; clearTimeout(viewRules.t); viewRules.t = setTimeout(() => { render(); const i = $('#oq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
+    if (q && !loadRules.r) loadRules().then(render).catch(e => toast('Kunde inte hämta regelboken: ' + e.message, 4000));
+    rl.onclick = e => { const a = e.target.closest('[data-rule]'); if (a) { e.preventDefault(); viewRules.q = a.dataset.rule; location.hash = '#/regler/bok'; } };
+    return;
+  }
+  if (sub === 'bok') {
+    if (!loadRules.r) {
+      rl.innerHTML = '<div class="card"><p class="muted">Hämtar regelboken från Wizards (ungefär 1 MB, sparas sedan i telefonen)…</p></div>';
+      loadRules().then(render).catch(e => { rl.innerHTML = `<div class="card empty">Kunde inte hämta regelboken: ${esc(e.message)}</div>`; });
+      return;
+    }
+    const R = loadRules.r, q = (viewRules.q || '').trim();
+    let hits = [], note = '';
+    if (/^\d{3}(\.\d+[a-z]?)?\.?$/.test(q)) {
+      const n = q.replace(/\.$/, '');
+      hits = R.rules.filter(r => r.n === n || r.n.startsWith(n + (n.includes('.') ? '' : '.')) || (n.includes('.') && /^\d{3}\.\d+$/.test(n) && r.n.startsWith(n) && /[a-z]$/.test(r.n)));
+    } else if (q) {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      hits = R.rules.filter(r => { const t = r.t.toLowerCase(); return words.every(w => t.includes(w)); });
+      if (hits.length > 60) { note = `Visar 60 av ${hits.length} träffar – lägg till fler ord.`; hits = hits.slice(0, 60); }
+    }
+    const words = /^\d/.test(q) ? [] : q.split(/\s+/);
+    rl.innerHTML = `<div class="card" style="max-width:900px">
+      <div class="row"><input type="search" id="rq" placeholder="Sök på engelska, t.ex. commander tax, eller ett regelnummer som 903.8" value="${esc(q)}" style="flex:1"></div>
+      <p class="small muted">Comprehensive Rules${R.effective ? `, gäller från ${esc(R.effective)}` : ''}. <a href="${esc(R.url)}" target="_blank" rel="noopener">Originalet hos Wizards</a></p>
+      ${q ? (hits.length ? `${note ? `<p class="small warn">${esc(note)}</p>` : ''}${hits.map(r => `<div class="rule"><a href="#" data-rule="${r.n}"><b>${r.n}</b></a> <span class="muted small">${esc(R.sections[r.sec] || '')}</span><div>${hiliteRule(ruleLinks(r.t), words)}</div></div>`).join('')}` : '<p class="muted">Inga regler matchar.</p>')
+        : `<h3>Snabbval</h3><div class="row small" style="flex-wrap:wrap">${[['903', 'Commander'], ['702', 'Nyckelord'], ['500', 'Turens delar'], ['506', 'Strid'], ['405', 'Stacken'], ['117', 'Prioritet'], ['104', 'Att vinna och förlora'], ['704', 'State-based actions'], ['613', 'Effekters ordning (lager)'], ['800', 'Multiplayer']].map(([n, l]) => `<a href="#" class="pill" data-rule="${n}">${n} ${l}</a>`).join('')}</div>`}</div>`;
+    const inp = $('#rq');
+    inp.oninput = () => { viewRules.q = inp.value; clearTimeout(viewRules.t); viewRules.t = setTimeout(() => { render(); const i = $('#rq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); };
+    rl.onclick = e => { const a = e.target.closest('[data-rule]'); if (a) { e.preventDefault(); viewRules.q = a.dataset.rule; render(); } };
+    return;
+  }
+  // bannade kort och game changers från Scryfall
+  const lists = [['banned:commander', 'Bannade i Commander'], ['banned:modern', 'Bannade i Modern'], ['is:gamechanger', 'Game changers (Commander)']];
+  const which = viewRules.ban || lists[0][0];
+  const data = (viewRules.banData = viewRules.banData || {})[which];
+  rl.innerHTML = `<div class="card"><div class="seg" id="banSeg">${lists.map(([k, l]) => `<button data-ban="${k}" class="${k === which ? 'on' : ''}">${l}</button>`).join('')}</div>
+    ${data ? `<p class="small muted">${data.length} kort${which === 'is:gamechanger' ? '. Game changers påverkar lekens bracket.' : ''}</p>
+      <ul class="vgrid">${data.map(c => `<li data-name="${esc(c.name)}"><img loading="lazy" src="${esc(c.thumb)}" alt="${esc(c.name)}" data-img="${esc(c.image)}" data-open style="cursor:pointer"><div class="small">${esc(c.name)}</div></li>`).join('')}</ul>`
+      : '<p class="muted">Hämtar från Scryfall…</p>'}</div>`;
+  if (!data) api('/api/search?max=175&q=' + encodeURIComponent(which)).then(r => { viewRules.banData[which] = r.cards.sort((a, b) => a.name.localeCompare(b.name)); for (const c of r.cards) S.cards[c.name] = S.cards[c.name] || c; render(); }).catch(e => toast(e.message, 4000));
+  rl.onclick = e => {
+    const b = e.target.closest('[data-ban]'); if (b) { viewRules.ban = b.dataset.ban; return render(); }
+    const o = e.target.closest('[data-open]'); if (o) cardModal(o.closest('li').dataset.name);
+  };
 }
 
 // ---------- installera som app ----------
@@ -1952,12 +2348,13 @@ function render() {
   const scroll = scrollY;
   let m;
   if (!h.startsWith('/liv')) { document.body.classList.remove('life-on'); wakeLock(false); }
-  if (h.startsWith('/liv')) viewLife();
+  if (h.startsWith('/liv')) viewLife((h.match(/^\/liv\/([A-Z0-9]{6})$/) || [])[1]);
   else if (h.startsWith('/onskelista')) viewWishlist();
   else if ((m = h.match(/^\/lek\/([\w-]+)/))) { if (render.deck !== m[1]) { render.deck = m[1]; S.tab = 'lista'; tabBuy.sel = null; } viewDeck(m[1]); }
   else if ((m = h.match(/^\/publik\/([\w-]+)/))) viewPublicDeck(m[1]);
   else if (h.startsWith('/utforska')) viewExplore(h.split('/')[2]);
   else if (h.startsWith('/matcher')) viewGames();
+  else if (h.startsWith('/regler')) viewRules(h.split('/')[2]);
   else if (h.startsWith('/samling')) viewCollection();
   else if (h.startsWith('/installningar')) viewSettings();
   else viewDecks();
@@ -1983,7 +2380,8 @@ addEventListener('hashchange', () => { $('#preview').hidden = true; render(); })
   }
   Object.assign(S, st);
   if (!S.cloud) $$('[data-nav=utforska]').forEach(a => a.remove());
-  else if (S.v4 && !S.offline) loadBookings().then(() => location.hash.startsWith('#/utforska') && render());
+  if (S.cloud && lifeState()?.room) roomJoin(lifeState().room);
+  if (S.cloud && S.v4 && !S.offline) loadBookings().then(() => location.hash.startsWith('#/utforska') && render());
   if (!S.v3) $$('[data-nav=onskelista]').forEach(a => a.remove());
   updateWishBadge();
   const names = new Set([...S.decks.flatMap(d => d.cards.map(c => c.name)), ...Object.keys(S.collection), ...S.wishlist.map(w => w.name)]);

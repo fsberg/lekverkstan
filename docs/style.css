@@ -255,3 +255,13 @@ body.life-on main { max-width: none; padding: 0; }
 
 /* v4: foil */
 .foil { color: #e0b84c; font-size: .85em; }
+
+.shared { color: var(--warn); font-weight: 700; }
+/* delad livräknare: min spelare överst och störst */
+.life.shared .pl.mine { order: -1; grid-column: 1 / -1; box-shadow: inset 0 0 0 3px rgba(255,255,255,.6); }
+.life.shared .pl:not(.mine) .lifeval { font-size: clamp(2.2rem, 11vmin, 6rem); }
+.lbar #lPeers { margin: 0 .3rem; }
+/* regler */
+.rules li { margin: .35rem 0; }
+.rule { padding: .5rem 0; border-top: 1px solid var(--border); font-size: .92rem; }
+.rule mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: 2px; }
