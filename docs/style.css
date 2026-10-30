@@ -6,8 +6,9 @@
   --bar: #5b3fd0; --gold: #b78a1d;
   --radius: 10px; --shadow: 0 1px 3px rgba(20, 10, 40, .08);
 }
+/* mörkt tema: följer telefonen, om man inte valt ljust eller mörkt under Inställningar */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #14121b; --surface: #1d1a27; --surface-2: #272334; --border: #363047;
     --text: #ecebf2; --text-2: #b3aec2; --muted: #857f96;
     --accent: #9d86ff; --accent-ink: #14121b; --accent-soft: #2c2547;
@@ -16,7 +17,17 @@
     --shadow: none;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #14121b; --surface: #1d1a27; --surface-2: #272334; --border: #363047;
+  --text: #ecebf2; --text-2: #b3aec2; --muted: #857f96;
+  --accent: #9d86ff; --accent-ink: #14121b; --accent-soft: #2c2547;
+  --good: #5fcf8c; --warn: #e7b04a; --bad: #ff7b72;
+  --bar: #9d86ff; --gold: #e0b84c;
+  --shadow: none;
+}
 :root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 /* webbläsarens autofyll ska följa temat, inte bli vit med ljus text */
 input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
@@ -265,3 +276,17 @@ body.life-on main { max-width: none; padding: 0; }
 .rules li { margin: .35rem 0; }
 .rule { padding: .5rem 0; border-top: 1px solid var(--border); font-size: .92rem; }
 .rule mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: 2px; }
+
+/* notisklockan */
+.bell { position: relative; border: 0; background: transparent; color: var(--text-2); font-size: 1.15rem; width: 2.3rem; height: 2.3rem; border-radius: 8px; cursor: pointer; }
+.bell:hover { background: var(--surface-2); }
+.bell .badge { position: absolute; top: 0; right: 0; font-size: .65rem; min-width: 1.1rem; padding: 0 .25rem; }
+.notes { position: fixed; top: 3.2rem; right: .6rem; width: min(360px, calc(100vw - 1.2rem)); max-height: 70vh; overflow: auto; z-index: 30; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+.notes a.note { display: block; padding: .6rem .8rem; border-bottom: 1px solid var(--border); color: var(--text); text-decoration: none; }
+.notes a.note:hover { background: var(--surface-2); }
+.notes a.note.new { border-left: 3px solid var(--accent); }
+.notes .note small { display: block; color: var(--muted); }
+@media (max-width: 720px) {
+  .bell { margin-left: auto; order: 1; }
+  .top nav { order: 2; }
+}

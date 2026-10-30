@@ -1286,6 +1286,8 @@ function viewCollection() {
 function viewSettings() {
   setNav('installningar');
   $('#app').innerHTML = `<div class="card" style="max-width:640px"><h1>Inställningar</h1>
+    <h3>Utseende</h3>
+    <div class="seg" id="themeSeg" role="group" aria-label="Tema">${[['auto', 'Som telefonen'], ['light', '☀️ Ljust'], ['dark', '🌙 Mörkt']].map(([k, l]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     ${S.cloud ? `<h3>Ditt namn</h3>
     <p class="small muted">Syns för andra inloggade på dina publika lekar och i bytesbörsen. Inloggad som ${esc(S.profile.email || '')}.</p>
     <div class="row"><input type="text" id="dispName" maxlength="40" placeholder="T.ex. Jonte" style="flex:1" value="${esc(S.profile.name || '')}"><button class="btn primary" id="saveName">Spara namn</button></div>` : ''}
@@ -1297,6 +1299,7 @@ function viewSettings() {
     <p class="small muted">Värden i kronor räknas om från Scryfalls europriser med dagens kurs, 1 € = ${S.rate.toLocaleString('sv-SE')} kr.</p>
     <p class="small muted">Alara-priser hämtas från butikens öppna sidor, cachas i 6 timmar och visar bara varianter som finns i lager. Cardmarket har inget öppet API för privatpersoner, därför används en önskelista plus deras egen Shopping Wizard.</p>
   </div>`;
+  $('#themeSeg').onclick = e => { const b = e.target.closest('[data-theme-set]'); if (b) { setTheme(b.dataset.themeSet); render(); } };
   if ($('#install')) $('#install').onclick = async () => { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; render(); };
   if ($('#saveName')) $('#saveName').onclick = async () => {
     const name = $('#dispName').value.trim();
@@ -1425,6 +1428,7 @@ function updateBookBadge() {
   const a = $('[data-nav=utforska]'); if (!a) return;
   const n = bookingAlerts();
   a.innerHTML = `Utforska${n ? ` <span class="badge">${n}</span>` : ''}`;
+  updateBell();
 }
 function bookModal(t) {
   openModal(`<div class="row"><h2 style="margin:0">Boka ${esc(t.name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
@@ -1443,7 +1447,7 @@ function bookModal(t) {
 }
 function tabBookings(ex) {
   if (!S.bookings) { ex.innerHTML = '<p class="muted">Hämtar…</p>'; loadBookings().then(render); return; }
-  try { localStorage.setItem('lv-book-seen', String(Date.now())); } catch {}
+  markBookingsSeen();
   const open = b => ['requested', 'accepted'].includes(b.status);
   const inc = S.bookings.filter(b => !b.mine), out = S.bookings.filter(b => b.mine);
   const sortB = a => a.slice().sort((x, y) => open(y) - open(x) || Date.parse(y.updated) - Date.parse(x.updated));
@@ -1618,6 +1622,7 @@ function updateWishBadge() {
   const a = $('[data-nav=onskelista]'); if (!a) return;
   const n = S.wishlist.filter(w => w.alert).length;
   a.innerHTML = `Önskelista${n ? ` <span class="badge">${n}</span>` : ''}`;
+  updateBell();
 }
 function viewWishlist() {
   setNav('onskelista');
@@ -2326,6 +2331,69 @@ function viewRules(sub) {
     const o = e.target.closest('[data-open]'); if (o) cardModal(o.closest('li').dataset.name);
   };
 }
+
+// ---------- notisklockan ----------
+// Samlar det som hänt: önskekort i lager, bokningar på mina kort, svar på mina bokningar och pågående delad match.
+const seenAt = () => { try { return +localStorage.getItem('lv-book-seen') || 0; } catch { return 0; } };
+// sedd = nu, eller senaste bokningens tid om serverns klocka ligger före telefonens
+function markBookingsSeen() {
+  const t = Math.max(Date.now(), ...(S.bookings || []).map(b => Date.parse(b.updated) || 0));
+  try { localStorage.setItem('lv-book-seen', String(t)); } catch {}
+}
+function notifications() {
+  const out = [], seen = seenAt();
+  for (const w of S.wishlist.filter(x => x.alert))
+    out.push({ at: Date.parse(w.checked_at) || 0, href: '#/onskelista', isNew: true, text: `${w.name} finns i lager hos Alara`, sub: w.last_price != null ? `${kr(w.last_price)}${w.max_price != null ? ` · ditt maxpris ${kr(w.max_price)}` : ''}` : 'Önskelista' });
+  for (const b of S.bookings || []) {
+    const at = Date.parse(b.updated) || 0;
+    if (!b.mine && b.status === 'requested') out.push({ at, href: '#/utforska/bokningar', isNew: true, text: `${b.other} vill boka ${b.qty} × ${b.name}`, sub: b.note ? `”${b.note}”` : 'Svara under Bokningar' });
+    else if (b.mine && ['accepted', 'declined', 'done'].includes(b.status)) out.push({ at, href: '#/utforska/bokningar', isNew: at > seen, text: `${b.other} ${b.status === 'accepted' ? 'godkände' : b.status === 'declined' ? 'nekade' : 'har lämnat över'} ${b.name}`, sub: b.reply ? `”${b.reply}”` : BOOK_SV[b.status] });
+  }
+  const ls = lifeState();
+  if (ls?.room && ls.players) out.push({ at: Date.now(), href: '#/liv/' + ls.room, isNew: false, text: 'Pågående delad match', sub: `Kod ${ls.room} · tryck för att gå tillbaka` });
+  return out.sort((a, b) => b.isNew - a.isNew || b.at - a.at);
+}
+function updateBell() {
+  const b = $('#bell'); if (!b) return;
+  const n = notifications().filter(x => x.isNew).length;
+  b.innerHTML = `🔔${n ? `<span class="badge">${n}</span>` : ''}`;
+  b.title = n ? `${n} nya notiser` : 'Notiser';
+  if ($('#notes')) drawNotes();
+}
+function drawNotes() {
+  let el = $('#notes');
+  if (!el) { el = document.createElement('div'); el.id = 'notes'; el.className = 'notes'; document.body.appendChild(el); }
+  const list = notifications(), anyNew = list.some(x => x.isNew);
+  el.innerHTML = `<div class="row" style="padding:.6rem .8rem;border-bottom:1px solid var(--border)"><b>Notiser</b><span class="spacer"></span>${anyNew ? '<button class="btn small" id="notesSeen">Markera som lästa</button>' : ''}</div>
+    ${list.length ? list.map(x => `<a class="note ${x.isNew ? 'new' : ''}" href="${esc(x.href)}">${esc(x.text)}<small>${esc(x.sub || '')}</small></a>`).join('')
+      : `<p class="muted small" style="padding:.8rem">Inget nytt. Här hamnar önskekort som kommer i lager${S.cloud ? ', bokningar i bytesbörsen och svar på dina bokningar' : ''}.</p>`}`;
+  if ($('#notesSeen')) $('#notesSeen').onclick = async e => {
+    e.stopPropagation();
+    markBookingsSeen();
+    for (const w of S.wishlist.filter(x => x.alert)) await saveWish({ name: w.name, alert: false }).catch(() => {});
+    updateWishBadge(); updateBookBadge(); updateBell();
+  };
+}
+$('#bell').onclick = e => {
+  e.stopPropagation();
+  if ($('#notes')) return $('#notes').remove();
+  drawNotes();
+  if (S.cloud && S.v4 && !S.offline) loadBookings(true).then(updateBell);
+};
+document.addEventListener('click', e => { const n = $('#notes'); if (n && (!n.contains(e.target) || e.target.closest('a.note'))) setTimeout(() => n.remove(), 0); });
+// håll klockan aktuell: hämta bokningar varannan minut och när appen kommer tillbaka i förgrunden
+setInterval(() => { if (S.cloud && S.v4 && !S.offline && document.visibilityState === 'visible') loadBookings(true).then(updateBell); }, 120000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.cloud && S.v4 && !S.offline) loadBookings(true).then(updateBell); });
+
+// ---------- tema ----------
+function setTheme(t) {
+  try { if (t === 'auto') localStorage.removeItem('lv-theme'); else localStorage.setItem('lv-theme', t); } catch {}
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const dark = t === 'dark' || (t === 'auto' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  $('meta[name=theme-color]')?.setAttribute('content', dark ? '#1f1a2e' : '#ffffff');
+}
+const themeNow = () => document.documentElement.dataset.theme || 'auto';
+setTheme(themeNow());
 
 // ---------- installera som app ----------
 let installEvt = null;
