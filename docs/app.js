@@ -1885,22 +1885,43 @@ const roomCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b =
 const shared = ['setup', 'start', 'players', 'seats'];
 
 // ---- delad räknare ----
-const room = { ch: null, code: '', peers: new Set() };
+const room = { ch: null, code: '', peers: new Map() }; // peers: annan flik -> senast hörd
+const livePeers = () => [...room.peers.values()].filter(t => Date.now() - t < 60000).length;
 function roomSend(msg) { room.ch?.send({ type: 'broadcast', event: 'm', payload: { ...msg, from: CID } }); }
 function roomJoin(code) {
   if (!window.LV_CHANNEL) return false;
   if (room.code === code && room.ch) return true;
   roomLeave();
-  room.code = code; room.peers = new Set();
+  room.code = code; room.peers = new Map();
+  clearInterval(room.ping); room.ping = setInterval(() => { roomSend({ t: 'ping' }); updateRoomBar(); }, 20000);
   // ny anslutning: ta emot de andras läge om någon svarar (vi kan ha missat ändringar)
   const s = lifeState(); if (s?.players) { s.synced = false; saveLife(); }
   room.ch = window.LV_CHANNEL('lv-life-' + code);
   room.ch.on('broadcast', { event: 'm' }, ({ payload }) => roomMsg(payload));
-  room.ch.subscribe(st => { if (st === 'SUBSCRIBED') roomSend({ t: 'hello' }); });
+  room.ch.subscribe(st => {
+    if (st === 'SUBSCRIBED') { room.err = false; roomSend({ t: 'hello' }); }
+    else if ((st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') && !room.err) { room.err = true; toast('Kunde inte ansluta till den delade räknaren – kolla nätet', 4000); }
+    updateRoomBar();
+  });
   return true;
 }
-function roomLeave() { if (room.ch) { try { room.ch.unsubscribe(); } catch {} } room.ch = null; room.code = ''; }
+function roomLeave() { clearInterval(room.ping); if (room.ch) { try { room.ch.unsubscribe(); } catch {} } room.ch = null; room.code = ''; }
+// allt som kommer från andra telefoner tvättas: rätt typer, rimliga gränser
+const num = (v, lo, hi, d = 0) => Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : d;
+function cleanShared(st) {
+  if (!st || !Array.isArray(st.players) || st.players.length < 2 || st.players.length > 6) return null;
+  const n = st.players.length;
+  const players = st.players.map((p, i) => ({
+    name: String(p?.name || `Spelare ${i + 1}`).slice(0, 20), life: num(p?.life, -999, 9999, 40), poison: num(p?.poison, 0, 99),
+    cmd: Object.fromEntries(Object.entries(p?.cmd || {}).filter(([j]) => /^\d$/.test(j) && +j < n).map(([j, v]) => [j, num(v, 0, 999)])),
+  }));
+  const setup = { n, life: num(st.setup?.life, 1, 999, 40), names: players.map(p => p.name), deck: '', share: true };
+  const seats = Object.fromEntries(Object.entries(st.seats || {}).filter(([j]) => /^\d$/.test(j) && +j < n).map(([j, v]) => [j, String(v).slice(0, 20)]));
+  return { setup, start: num(st.start, 0, 9e15, Date.now()), players, seats };
+}
 function applyOp(s, op) {
+  if (!op || typeof op.id !== 'string' || !['life', 'poison', 'cmd'].includes(op.k)) return false;
+  op = { id: op.id.slice(0, 40), k: op.k, p: num(op.p, 0, 5, -1), d: num(op.d, -999, 999), j: op.j == null ? undefined : num(op.j, 0, 5) };
   s.applied = s.applied || [];
   if (s.applied.includes(op.id)) return false;
   s.applied.push(op.id); if (s.applied.length > 400) s.applied.splice(0, 100);
@@ -1921,24 +1942,32 @@ function lifeOp(p, k, d, j) {
 function roomMsg(m) {
   const s = lifeState();
   if (!s || m.from === CID) return;
-  room.peers.add(m.from);
+  room.peers.set(String(m.from).slice(0, 20), Date.now());
+  if (m.t === 'ping') return updateRoomBar();
   if (m.t === 'hello') {
     if (s.players && s.room === room.code) roomSend({ t: 'state', to: m.from, state: Object.fromEntries(shared.map(k => [k, s[k]])), applied: s.applied || [] });
     return updateRoomBar();
   }
   if (m.t === 'state' && m.to === CID) {
-    if (s.synced) return;
-    Object.assign(s, m.state, { applied: m.applied, synced: true }); saveLife();
+    const st = cleanShared(m.state);
+    if (s.synced || !st) return;
+    // egen lek och plats behålls, startlivet följer med för Börja om
+    Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: (Array.isArray(m.applied) ? m.applied : []).filter(x => typeof x === 'string').slice(-400), synced: true }); saveLife();
     if (s.me == null || !s.players[s.me]) return location.hash.startsWith('#/liv') ? render() : null;
     return lifeRedraw();
   }
   if (!s.players || s.room !== room.code) return;
   if (m.t === 'op') { if (applyOp(s, m.op)) { saveLife(); lifeRedraw(); } return; }
-  if (m.t === 'seat') { s.seats = s.seats || {}; s.seats[m.p] = m.from; if (m.name) s.players[m.p].name = m.name; saveLife(); return lifeRedraw(); }
-  if (m.t === 'reset') { Object.assign(s, m.state, { applied: [] }); saveLife(); toast('Matchen började om'); return lifeRedraw(); }
-  if (m.t === 'end') return lifeFinish(m.win, m.by);
+  if (m.t === 'seat') {
+    const i = num(m.p, 0, 5, -1); if (!s.players[i]) return;
+    s.seats = s.seats || {}; s.seats[i] = String(m.from).slice(0, 20);
+    if (m.name) s.players[i].name = String(m.name).slice(0, 20);
+    saveLife(); return lifeRedraw();
+  }
+  if (m.t === 'reset') { const st = cleanShared(m.state); if (!st) return; Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: [] }); saveLife(); toast('Matchen började om'); return lifeRedraw(); }
+  if (m.t === 'end') return lifeFinish(m.win === 'draw' ? 'draw' : m.win == null ? null : String(num(m.win, 0, 5)), m.by ? String(m.by).slice(0, 20) : '');
 }
-function updateRoomBar() { const el = $('#lPeers'); if (el) el.textContent = room.peers.size ? `${room.peers.size + 1} anslutna` : 'väntar på de andra…'; }
+function updateRoomBar() { const el = $('#lPeers'); if (el) el.textContent = room.err ? 'ingen anslutning' : livePeers() ? `${livePeers() + 1} anslutna` : 'väntar på de andra…'; }
 // rita om bara siffrorna, så att pågående tryck inte avbryts
 function lifeRedraw() {
   const s = lifeState();
@@ -1951,7 +1980,7 @@ function lifeRedraw() {
     $('.extra', pl).innerHTML = lifeExtra(p, s);
     pl.classList.toggle('out', isOut(p, s));
   });
-  if (!$('#modal').hidden && lifeMore.i != null) lifeMore(lifeMore.i);
+  if (!$('#modal').hidden && $('.modal-box').dataset.lifeMore != null) lifeMore(+$('.modal-box').dataset.lifeMore);
 }
 const lifeExtra = (p, s) => `${p.poison ? `<span title="Gift">☠ ${p.poison}</span>` : ''}${s.players.map((_, j) => p.cmd[j] ? `<span title="Befälhavarskada från ${esc(s.players[j].name)}">⚔ ${esc(s.players[j].name.slice(0, 8))} ${p.cmd[j]}</span>` : '').join('')}`;
 
@@ -2070,12 +2099,12 @@ function viewLife(code) {
 }
 function lifeMore(i) {
   const s = lifeState(), p = s.players[i];
-  lifeMore.i = i;
   const row = (label, key, j) => `<div class="row" style="justify-content:space-between"><span>${label}</span><span class="row"><button class="btn small" data-k="${key}" data-j="${j ?? ''}" data-d="-1">−</button><b style="min-width:2rem;text-align:center">${key === 'poison' ? p.poison : p.cmd[j] || 0}</b><button class="btn small" data-k="${key}" data-j="${j ?? ''}" data-d="1">+</button></span></div>`;
   openModal(`<div class="row"><h2 style="margin:0">${esc(p.name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
     <h3>Gift</h3>${row('☠ Giftmarkörer (10 = ute)', 'poison')}
     <h3>Befälhavarskada (21 = ute)</h3>${s.players.map((o, j) => j === i ? '' : row('⚔ från ' + esc(o.name), 'cmd', j)).join('')}
     <p class="muted small">Befälhavarskada drar också av liv.</p>`, box => {
+    box.dataset.lifeMore = i;
     box.onclick = e => {
       const b = e.target.closest('[data-k]'); if (!b) return;
       lifeOp(i, b.dataset.k, +b.dataset.d, b.dataset.k === 'cmd' ? +b.dataset.j : undefined);
@@ -2259,7 +2288,8 @@ function parseRules(text) {
 }
 const ruleLinks = t => esc(t).replace(/\b(\d{3}\.\d+[a-z]?)\b/g, '<a href="#" data-rule="$1">$1</a>').replace(/\n/g, '<br>');
 function hiliteRule(html, words) {
-  for (const w of words) if (w.length > 2) html = html.replace(new RegExp('(?![^<]*>)(' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>');
+  // lookbehind finns inte i äldre Safari: då blir det bara ingen markering
+  for (const w of words) if (w.length > 2) try { html = html.replace(new RegExp('(?![^<]*>)(?<!&[#a-z0-9]*)(' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); } catch {}
   return html;
 }
 

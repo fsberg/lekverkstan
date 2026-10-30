@@ -190,6 +190,8 @@
 
   // ---------- appens api()-vägar mot Supabase ----------
   const fail = error => { if (error) throw new Error(error.message); };
+  // numeric-kolumner kommer som text från PostgREST
+  const wishOut = x => ({ ...x, max_price: x.max_price == null ? null : Number(x.max_price), last_price: x.last_price == null ? null : Number(x.last_price) });
   const deckOut = d => ({ ...d, created: Date.parse(d.created), updated: Date.parse(d.updated) });
 
   window.LV_BACKEND = async (path, opts = {}) => {
@@ -224,7 +226,7 @@
         collection: Object.fromEntries(c.data.map(r => [r.name, r.qty])),
         trade: (v2 = !t.error, tradeMap = t.error ? {} : Object.fromEntries(t.data.map(r => [r.name, r.for_trade]))),
         games: g.error ? [] : g.data,
-        wishlist: w.error ? [] : w.data.map(x => ({ ...x, max_price: x.max_price == null ? null : Number(x.max_price), last_price: x.last_price == null ? null : Number(x.last_price) })),
+        wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
         v3: !w.error, v4,
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
@@ -302,7 +304,7 @@
       const row = { owner: user.id, name: String(body.name || '').slice(0, 150) };
       for (const k of ['qty', 'max_price', 'last_price', 'in_stock', 'checked_at', 'alert', 'note']) if (k in body) row[k] = body[k];
       const { data, error } = await sb.from('lv_wishlist').upsert(row).select().single();
-      fail(error); return data;
+      fail(error); return wishOut(data);
     }
     if (p === '/api/wishlist' && m === 'DELETE') { fail((await sb.from('lv_wishlist').delete().eq('owner', user.id).eq('name', url.searchParams.get('name'))).error); return { ok: true }; }
     if (p === '/api/loans' && m === 'POST') {
