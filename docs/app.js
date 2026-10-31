@@ -457,7 +457,18 @@ document.addEventListener('click', e => {
 });
 
 // ---------- vyer ----------
-function setNav(which) { $$('.top nav a').forEach(a => a.classList.toggle('on', a.dataset.nav === which)); }
+function setNav(which) {
+  $$('.top nav a').forEach(a => {
+    a.classList.toggle('on', a.dataset.nav === which);
+    if (a.dataset.nav === which && window.matchMedia?.('(max-width: 720px)').matches) a.scrollIntoView?.({ inline: 'center', block: 'nearest' });
+  });
+}
+document.addEventListener('click', e => {
+  const m = e.target.closest?.('.shared[title], .lent[title]');
+  if (!m) return;
+  e.preventDefault(); e.stopPropagation();
+  toast(m.title, 4000);
+}, true);
 
 function viewDecks() {
   setNav('lekar');
@@ -484,7 +495,9 @@ function viewDecks() {
       <label class="small">Sortera <select id="deckSort"><option value="updated">Senast ändrad</option><option value="owned">Mest komplett</option><option value="name">Namn</option></select></label>
       <a class="btn" href="#/bygg">Bygg från samlingen</a>
       <button class="btn primary" id="newDeck">+ Ny lek</button></div>
-    ${S.decks.length ? `<div class="deck-grid">${tiles}</div>` : `<div class="card empty" style="margin-top:1rem">Inga lekar än. Skapa en ny, eller klistra in en lista från Moxfield/Archidekt.</div>`}`;
+    ${S.cloud && !S.profile.name ? '<div class="next small" style="margin-top:.8rem"><span>Du har inget namn än. Det behövs för att andra ska se vem du är.</span><a class="btn small" href="#/installningar">Sätt ditt namn</a></div>' : ''}
+    ${S.decks.length ? `<div class="deck-grid">${tiles}</div>` : `<div class="card empty" style="margin-top:1rem"><p>Inga lekar än. Skapa en ny, eller klistra in en lista från Moxfield/Archidekt.</p>
+      <div class="row" style="justify-content:center"><a class="btn" href="#/samling">1. Lägg in dina kort</a><a class="btn" href="#/bygg">2. Bygg från samlingen</a></div></div>`}`;
   $('#deckSort').value = sortBy;
   $('#deckSort').onchange = e => { try { localStorage.setItem('lv-sort', e.target.value); } catch {} render(); };
   $('#newDeck').onclick = () => openModal(`
@@ -518,6 +531,19 @@ function viewDecks() {
   });
 }
 
+// en rad som säger vad som är rimligast att göra härnäst med leken
+function nextStep(deck) {
+  if (!deck.cards.length) return '';
+  const bar = (text, btn = '') => `<div class="next small"><span>${text}</span>${btn}</div>`;
+  if (deck.format === 'commander' && !deck.cards.some(c => c.board === 'commander')) return bar('Leken saknar befälhavare. Tryck på ★ vid kortet som ska leda leken.');
+  const miss = missingCards(deck).reduce((a, m) => a + m.missing, 0);
+  if (S.v6 && !S.decks.some(d => d.built) && Object.values(sharedShortage()).some(x => x.decks.some(y => y.id === deck.id)))
+    return bar('Vissa kort behövs i flera lekar. Bocka i <b>Ihopbyggd</b> på de lekar du redan satt ihop, så vet appen vad som är ledigt.');
+  if (miss) return bar(`Du saknar <b>${miss}</b> kort.`, '<button class="btn small" data-next="kop">Till köplistan</button><button class="btn small" data-next="pick">Plockguide</button>');
+  if (!deck.built) return bar(`Du har alla kort!${S.v6 ? ' Plocka ihop leken och bocka i <b>Ihopbyggd</b>.' : ''}`, '<button class="btn small" data-next="pick">Plockguide</button>');
+  return bar('Leken är ihopbyggd.', '<button class="btn small" data-next="provhand">Testa en hand</button>');
+}
+
 function viewDeck(id) {
   setNav('lekar');
   const deck = S.decks.find(d => d.id === id);
@@ -527,8 +553,9 @@ function viewDeck(id) {
     viewDeck.loading = true;
     ensureCards(missingInfo).catch(e => toast(e.message)).finally(() => { viewDeck.loading = false; render(); });
   }
-  const tabs = [['lista', 'Lista'], ['statistik', 'Statistik'], ['provhand', 'Provhand'], ['kop', 'Köpa'], ['sok', 'Hitta kort'],
-    ...(deck.format === 'commander' ? [['forslag', 'Förslag'], ['kombos', 'Kombos']] : []), ['versioner', 'Versioner'], ['text', 'Import/Export']];
+  const commander = deck.format === 'commander';
+  const tabs = [['lista', 'Lista'], ['sok', 'Hitta kort'], ...(commander ? [['forslag', 'Förslag']] : []), ['kop', 'Köpa'], ['statistik', 'Statistik'], ['provhand', 'Provhand'],
+    ...(commander ? [['kombos', 'Kombos']] : []), ['versioner', 'Versioner'], ['text', 'Import/Export']];
   if (!tabs.some(t => t[0] === S.tab)) S.tab = 'lista';
   $('#app').innerHTML = `
     <div class="row">
@@ -536,9 +563,11 @@ function viewDeck(id) {
       <input type="text" id="deckName" value="${esc(deck.name)}" style="font-size:1.3rem;font-weight:700;flex:1;min-width:180px;border-color:transparent;background:transparent">
       <select id="deckFormat"><option value="commander" ${deck.format === 'commander' ? 'selected' : ''}>Commander</option><option value="modern" ${deck.format === 'modern' ? 'selected' : ''}>Modern</option></select>
       ${S.cloud ? `<label class="small row" title="Publika lekar syns för alla inloggade under Utforska. Bara du kan ändra dem."><input type="checkbox" id="deckPublic" ${deck.public ? 'checked' : ''}> Publik</label>` : ''}
+      ${S.v6 ? `<label class="small row" title="Korten sitter i leken och räknas som upptagna i dina andra lekar"><input type="checkbox" id="built" ${deck.built ? 'checked' : ''}> Ihopbyggd</label>` : ''}
       <button class="btn danger small" id="delDeck">Radera</button>
     </div>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    ${S.tab === 'lista' ? nextStep(deck) : ''}
     <div id="tab"></div>`;
   $('#deckName').onchange = e => { deck.name = e.target.value.trim() || deck.name; saveDeckSoon(deck); };
   $('#deckFormat').onchange = e => { deck.format = e.target.value; saveDeckSoon(deck); render(); };
@@ -546,11 +575,23 @@ function viewDeck(id) {
     deck.public = e.target.checked; saveDeckSoon(deck);
     toast(deck.public ? (S.profile?.name ? 'Leken är publik under Utforska' : 'Publik! Sätt ditt namn under Inställningar så syns vem den är från') : 'Leken är privat igen', 3500);
   };
+  if ($('#built')) $('#built').onchange = async e => {
+    const on = e.target.checked;
+    deck.built = on; render();
+    try {
+      await api('/api/decks/' + deck.id, { method: 'PUT', body: { built: on } });
+      toast(on ? 'Korten räknas nu som upptagna i dina andra lekar' : 'Korten räknas som lediga igen', 3000);
+    } catch (err) { deck.built = !on; render(); toast('Kunde inte spara: ' + err.message); }
+  };
   $('#delDeck').onclick = () => openModal(`<h2>Radera "${esc(deck.name)}"?</h2><p class="muted">Din samling påverkas inte.</p>
     <p class="row"><span class="spacer"></span><button class="btn" data-close>Avbryt</button><button class="btn primary" id="delOk">Radera</button></p>`, box => {
     $('#delOk', box).onclick = async () => { await api('/api/decks/' + deck.id, { method: 'DELETE' }); S.decks = S.decks.filter(d => d !== deck); closeModal(); location.hash = '#/'; };
   });
   $$('.tabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
+  $$('[data-next]').forEach(b => b.onclick = () => {
+    if (b.dataset.next === 'pick') return pickModal(deck);
+    S.tab = b.dataset.next; render();
+  });
   const tab = $('#tab');
   ({ lista: tabList, statistik: tabStats, provhand: tabHand, kop: tabBuy, sok: tabSearch, forslag: tabSuggest, kombos: tabCombos, versioner: tabVersions, text: tabText })[S.tab](deck, tab);
 }
@@ -670,29 +711,25 @@ function tabList(deck, tab) {
             return `<tr><td>${k}</td><td class="num ${cls}"><b>${v}</b></td><td class="muted">${t ? `mål ${t[0]}–${t[1]}` : ''}</td></tr>`;
           }).join('')}</tbody></table>
           <p class="muted small">Rollerna gissas från korttexten. Klicka på ett kort och välj Roll om gissningen är fel.</p></div>
-        <div class="card"><h2>Samling</h2>
+        <div class="card"><h2>Dina kort</h2>
           <p>${miss.length ? `Du saknar <b>${miss.reduce((a, c) => a + c.missing, 0)}</b> kort (${miss.length} olika).` : '<b>Du har alla kort!</b>'}</p>
           ${taken.length ? `<p class="small" style="margin:.2rem 0">${taken.length} av korten finns i din samling men sitter i en ihopbyggd lek:</p>
             <ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${taken.map(x => `<li><b>${esc(x.name)}</b> – ${esc(x.where)}</li>`).join('')}</ul>` : ''}
-          ${S.v6 ? `<label class="small row" title="Korten i leken räknas som upptagna i dina andra lekar"><input type="checkbox" id="built" ${deck.built ? 'checked' : ''}> Leken är ihopbyggd</label>` : ''}
           <label class="small row"><input type="checkbox" id="basics" ${S.basicsOwned ? 'checked' : ''}> Räkna basländer som ägda</label>
           <div class="row" style="margin-top:.6rem"><button class="btn small" id="ownAll">Bocka i alla</button><button class="btn small" id="pickGo">Plockguide</button><button class="btn small" id="toBuy">Till köplistan →</button></div>
-          <p class="muted small">Bocka i rutan framför ett kort när du har det. Det sparas i din samling och gäller alla lekar.${S.v6 ? ' Bocka i Leken är ihopbyggd när korten sitter i leken, så räknas de som upptagna i dina andra lekar.' : ''}</p>
+          <p class="muted small">Bocka i rutan framför ett kort när du har det. Det sparas i din samling och gäller alla lekar.${S.v6 ? ' Bocka i Ihopbyggd högst upp när korten sitter i leken, så räknas de som upptagna i dina andra lekar.' : ''}</p>
         </div>
       </div>
     </div>`;
   addCardUI($('#addBar'), name => addToDeck(deck, name, $('#addBoard').value));
-  if ($('#built')) $('#built').onchange = async e => {
-    const on = e.target.checked;
-    deck.built = on; render();
-    try { await api('/api/decks/' + deck.id, { method: 'PUT', body: { built: on } }); } catch (err) { deck.built = !on; render(); toast('Kunde inte spara: ' + err.message); }
-  };
   $('#basics').onchange = e => { S.basicsOwned = e.target.checked; try { localStorage.setItem('basicsOwned', S.basicsOwned ? '1' : '0'); } catch {} render(); };
   $('#toBuy').onclick = () => { S.tab = 'kop'; render(); };
   $('#pickGo').onclick = () => pickModal(deck);
   $('#ownAll').onclick = async () => {
-    const body = {};
-    for (const m of missingCards(deck)) body[m.name] = ownTarget(m.name, deck, m.qty);
+    const body = {}, list = missingCards(deck);
+    if (!list.length) return toast('Du har redan alla kort');
+    if (!confirm(`Lägga ${list.reduce((a, m) => a + m.missing, 0)} kort i din samling?`)) return;
+    for (const m of list) body[m.name] = ownTarget(m.name, deck, m.qty);
     Object.assign(S.collection, body);
     await api('/api/collection', { method: 'PUT', body }); render();
   };
@@ -1265,7 +1302,7 @@ function viewCollection() {
   const loanRows = S.loans.map(l => `<tr data-loan="${esc(l.id)}"><td><span data-img="${esc(S.cards[l.name]?.image || scryImg(l.name))}">${esc(l.name)}</span></td><td class="num">${l.qty}</td>
     <td>${esc(l.borrower)}</td><td class="small">${esc(l.lent_on)}</td><td><button class="btn small" data-back="${esc(l.id)}">Tillbaka ✓</button></td></tr>`).join('');
   $('#app').innerHTML = `<div id="col">
-    <div class="row"><h1>Min samling</h1><span class="spacer"></span><span class="muted">${names.length} olika · ${total} kort · ca <b>${krE(value)}</b></span></div>
+    <div class="row"><h1>Min samling</h1><span class="spacer"></span><span class="muted">${names.length} olika · ${total} kort · ca <b>${krE(value)}</b></span><button class="btn small" id="scanTop">📷 Skanna</button></div>
     <div class="grid cols-2" style="margin-top:1rem">
       <div class="card">
         <div class="row" style="margin-bottom:.6rem"><div class="add-bar" id="colAdd"></div><input type="search" id="colFilter" placeholder="Filtrera…" style="width:160px"></div>
@@ -1294,7 +1331,7 @@ function viewCollection() {
         <div class="row"><span class="spacer"></span><button class="btn primary" id="colImpGo">Lägg till i samlingen</button></div>
         <p class="muted small">Antalen läggs ovanpå det du redan har.</p></div></div>
     </div></div>`;
-  $('#scanGo').onclick = () => scanModal();
+  $('#scanGo').onclick = $('#scanTop').onclick = () => scanModal();
   hookTips($('#app'));
   if ($('#colSort')) $('#colSort').onchange = e => { viewCollection.sort = e.target.value; render(); };
   if ($('#loanCard')) addCardUI($('#loanCard'), async name => {
@@ -2475,7 +2512,7 @@ function drawNotes() {
   const list = notifications(), anyNew = list.some(x => x.isNew);
   el.innerHTML = `<div class="row" style="padding:.6rem .8rem;border-bottom:1px solid var(--border)"><b>Notiser</b><span class="spacer"></span>${anyNew ? '<button class="btn small" id="notesSeen">Markera som lästa</button>' : ''}</div>
     ${list.length ? list.map(x => `<a class="note ${x.isNew ? 'new' : ''}" href="${esc(x.href)}">${esc(x.text)}<small>${esc(x.sub || '')}</small></a>`).join('')
-      : `<p class="muted small" style="padding:.8rem">Inget nytt. Här hamnar önskekort som kommer i lager${S.cloud ? ', bokningar i bytesbörsen och svar på dina bokningar' : ''}.</p>`}`;
+      : `<p class="muted small" style="padding:.8rem">Inget nytt. Här hamnar önskekort som kommer i lager${S.cloud ? ', bokningar i bytesbörsen, svar på dina bokningar och spelkvällar' : ''}.</p>`}`;
   if ($('#notesSeen')) $('#notesSeen').onclick = async e => {
     e.stopPropagation();
     markBookingsSeen(); markEventsSeen();
