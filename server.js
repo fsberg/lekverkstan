@@ -301,7 +301,7 @@ function readBody(req) {
 
 async function api(req, res, url) {
   const p = url.pathname, m = req.method;
-  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, wishlist, loans, colmeta, v3: true, v4: true, profile: { name: '' }, cloud: false, settings });
+  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, wishlist, loans, colmeta, v3: true, v4: true, v6: true, profile: { name: '' }, cloud: false, settings });
   if (p === '/api/wishlist' && m === 'PUT') {
     const b = await readBody(req);
     const name = String(b.name || '').slice(0, 150);
@@ -361,6 +361,7 @@ async function api(req, res, url) {
       if (b.format === 'modern' || b.format === 'commander') d.format = b.format;
       if (typeof b.notes === 'string') d.notes = b.notes.slice(0, 5000);
       if (typeof b.public === 'boolean') d.public = b.public;
+      if (typeof b.built === 'boolean') d.built = b.built;
       if (Array.isArray(b.versions)) d.versions = b.versions.slice(0, 20);
       if (Array.isArray(b.cards)) d.cards = b.cards.filter(c => c && c.name).map(c => ({
         name: String(c.name).slice(0, 150), qty: Math.max(1, Math.min(99, c.qty | 0 || 1)),

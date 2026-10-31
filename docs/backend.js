@@ -208,7 +208,7 @@
       ]);
       fail(d.error); fail(c.error);
       // v2-tabeller: saknas de (gammal databas) blir det bara tomt
-      const [t, g, pr, w, l, cm] = await Promise.all([
+      const [t, g, pr, w, l, cm, bu] = await Promise.all([
         sb.from('lv_collection').select('name, for_trade').eq('owner', user.id).gt('for_trade', 0),
         sb.from('lv_games').select('*').order('played_on', { ascending: false }).order('created', { ascending: false }),
         sb.from('lv_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
@@ -217,6 +217,8 @@
         sb.from('lv_loans').select('*').order('lent_on', { ascending: false }),
         // v4: datum och utgåvor
         sb.from('lv_collection').select('name, added, prints').eq('owner', user.id),
+        // v6: ihopbyggda lekar
+        sb.from('lv_decks').select('built').limit(0),
       ]);
       v4 = !cm.error;
       for (const k of Object.keys(colQty)) delete colQty[k];
@@ -228,7 +230,7 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
-        v3: !w.error, v4,
+        v3: !w.error, v4, v6: !bu.error,
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
         profile: { name: pr.data?.display_name || '', email: user.email },
         cloud: true,
@@ -329,6 +331,7 @@
       if (body.format === 'modern' || body.format === 'commander') patch.format = body.format;
       if (typeof body.notes === 'string') patch.notes = body.notes.slice(0, 5000);
       if (typeof body.public === 'boolean') patch.public = body.public;
+      if (typeof body.built === 'boolean') patch.built = body.built;
       if (Array.isArray(body.versions)) patch.versions = body.versions.slice(0, 20);
       if (Array.isArray(body.cards)) patch.cards = body.cards.filter(c => c && c.name).map(c => ({
         name: String(c.name).slice(0, 150), qty: Math.max(1, Math.min(99, c.qty | 0 || 1)),

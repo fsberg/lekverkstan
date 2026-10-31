@@ -85,6 +85,22 @@ const printLabel = p => `${p.foil ? '✦ foil ' : ''}${(p.set || '').toUpperCase
 
 // ---------- regler ----------
 const owned = name => S.collection[name] || (S.basicsOwned && BASICS.has(name) ? 999 : 0);
+// ex som sitter i ihopbyggda lekar: [{ id, name, qty }]
+function builtIn(name) {
+  if (S.basicsOwned && BASICS.has(name)) return [];
+  const out = [];
+  for (const d of S.decks) {
+    if (!d.built) continue;
+    const qty = d.cards.filter(c => c.name === name && c.board !== 'maybe').reduce((a, c) => a + c.qty, 0);
+    if (qty) out.push({ id: d.id, name: d.name, qty });
+  }
+  return out;
+}
+const reserved = (name, deck) => deck?.built ? 0 : builtIn(name).reduce((a, x) => a + x.qty, 0);
+// ex som är lediga för en lek: en ihopbyggd lek räknar allt, andra lekar bara det som inte sitter i en ihopbyggd
+const free = (name, deck) => Math.max(0, owned(name) - reserved(name, deck));
+// så många ex som samlingen måste ha för att leken ska få sina utan att ta från en ihopbyggd lek
+const ownTarget = (name, deck, need) => Math.max(S.collection[name] || 0, need + reserved(name, deck));
 function mainType(card) {
   const t = (card?.type_line || '').split(' // ')[0];
   return TYPE_ORDER.find(x => t.includes(x)) || 'Other';
@@ -180,7 +196,7 @@ function bracketInfo(deck) {
 function missingCards(deck, includeMaybe = false) {
   const need = {};
   for (const c of deck.cards) if (includeMaybe || c.board !== 'maybe') need[c.name] = (need[c.name] || 0) + c.qty;
-  return Object.entries(need).map(([name, qty]) => ({ name, qty, missing: Math.max(0, qty - owned(name)) })).filter(x => x.missing > 0);
+  return Object.entries(need).map(([name, qty]) => ({ name, qty, missing: Math.max(0, qty - free(name, deck)) })).filter(x => x.missing > 0);
 }
 
 // ---------- import ----------
@@ -454,7 +470,7 @@ function viewDecks() {
       <div class="art" style="${art ? `background-image:url('${esc(art).replace(/'/g, '%27')}')` : ''}"></div>
       <div class="body"><b>${esc(d.name)}</b>${d.public ? ' <span class="pill" title="Syns för andra under Utforska">publik</span>' : ''}
         <div class="row small" style="margin-top:.3rem"><span class="pill">${FORMAT_SV[d.format]}</span><span class="pill">${deckTotal(d)} kort</span>
-        <span class="pill ${miss ? 'warn' : 'good'}">${miss ? `saknar ${miss}` : 'komplett'}</span>${rec.n ? `<span class="pill" title="Vinster i spelloggen">${rec.win}/${rec.n} vinster</span>` : ''}
+        ${d.built ? '<span class="pill good" title="Korten sitter i leken">byggd</span>' : ''}<span class="pill ${miss ? 'warn' : 'good'}">${miss ? `saknar ${miss}` : 'komplett'}</span>${rec.n ? `<span class="pill" title="Vinster i spelloggen">${rec.win}/${rec.n} vinster</span>` : ''}
         <span class="pill" title="Ungefärligt värde enligt Cardmarket-trend">${krE(deckValue(d))}</span></div>
         <div class="ownbar" title="Du äger ${Math.round(share * 100)} % av korten"><div style="width:${share * 100}%"></div></div>
         <div class="muted small">Du äger ${Math.round(share * 100)} %</div></div></a>`;
@@ -573,14 +589,14 @@ async function addToDeck(deck, name, board = 'main') {
 
 function cardRow(deck, c) {
   const info = S.cards[c.name];
-  const have = owned(c.name);
+  const have = free(c.name, deck);
   const full = have >= c.qty;
   const part = !full && have > 0;
   const showOwn = !(S.basicsOwned && BASICS.has(c.name));
   return `<li class="${full ? 'owned' : ''}" data-name="${esc(c.name)}" data-board="${c.board}">
     ${showOwn ? `<label class="own" title="Jag har detta kort"><input type="checkbox" data-own ${full ? 'checked' : ''}>${part ? `<span class="part">${have}/${c.qty}</span>` : ''}</label>` : '<span style="width:1.05rem"></span>'}
     <span class="q">${c.qty}</span>
-    <span class="nm ${info ? '' : 'missing'}" data-open data-img="${esc(ownImg(c.name))}">${esc(c.name)}${info?.game_changer ? ' <span class="gc" title="Game changer">GC</span>' : ''}${lentQty(c.name) ? ` <span class="lent" title="Utlånat: ${esc(S.loans.filter(l => l.name === c.name).map(l => l.borrower).join(', '))}">↗</span>` : ''}${S.shared?.[c.name] ? ` <span class="shared" title="Du har ${S.shared[c.name].own} ex men ${S.shared[c.name].sum} behövs i ${esc(S.shared[c.name].decks.map(x => x.name).join(', '))}">⇄</span>` : ''}</span>
+    <span class="nm ${info ? '' : 'missing'}" data-open data-img="${esc(ownImg(c.name))}">${esc(c.name)}${info?.game_changer ? ' <span class="gc" title="Game changer">GC</span>' : ''}${lentQty(c.name) ? ` <span class="lent" title="Utlånat: ${esc(S.loans.filter(l => l.name === c.name).map(l => l.borrower).join(', '))}">↗</span>` : ''}${S.taken?.[c.name] ? ` <span class="shared" title="${esc(S.taken[c.name])}">⇄</span>` : S.shared?.[c.name] ? ` <span class="shared" title="Du har ${S.shared[c.name].own} ex men ${S.shared[c.name].sum} behövs i ${esc(S.shared[c.name].decks.map(x => x.name).join(', '))}">⇄</span>` : ''}</span>
     <span class="mana">${info ? manaHtml(info.mana_cost) : ''}</span>
     <span class="acts">
       ${deck.format === 'commander' && c.board !== 'commander' && info?.commander_ok ? '<button class="icon-btn" data-act="cmd" title="Gör till befälhavare">★</button>' : ''}
@@ -591,9 +607,9 @@ function cardRow(deck, c) {
 }
 
 // bildläge: samma li-struktur som listan, så att samma klick- och bock-hantering fungerar
-function cardTile(c) {
+function cardTile(deck, c) {
   const info = S.cards[c.name];
-  const have = owned(c.name), full = have >= c.qty;
+  const have = free(c.name, deck), full = have >= c.qty;
   const showOwn = !(S.basicsOwned && BASICS.has(c.name));
   return `<li class="${full ? 'owned' : 'lack'}" data-name="${esc(c.name)}" data-board="${c.board}">
     ${info?.thumb ? `<img loading="lazy" src="${esc(printOf1(c.name) ? printImg(printOf1(c.name), 'small') : info.thumb)}" alt="${esc(c.name)}" data-open data-img="${esc(ownImg(c.name))}">` : `<div class="noimg" data-open>${esc(c.name)}</div>`}
@@ -616,10 +632,12 @@ function tabList(deck, tab) {
   const br = deck.format === 'commander' ? bracketInfo(deck) : null;
   S.shared = sharedShortage();
   const clash = Object.entries(S.shared).filter(([, x]) => x.decks.some(y => y.id === deck.id)).sort((a, b) => a[0].localeCompare(b[0]));
+  const taken = takenCards(deck);
+  S.taken = Object.fromEntries(taken.map(x => [x.name, x.text]));
   const sections = order.filter(k => groups[k]).map(k => {
     const list = groups[k].sort((a, b) => (S.cards[a.name]?.cmc ?? 99) - (S.cards[b.name]?.cmc ?? 99) || a.name.localeCompare(b.name));
     return `<section><div class="section-head"><h3>${TYPE_SV[k] || k}</h3><span class="muted small">${list.reduce((a, c) => a + c.qty, 0)}</span></div>
-      ${visual ? `<ul class="vgrid">${list.map(c => cardTile(c)).join('')}</ul>` : `<ul class="clist">${list.map(c => cardRow(deck, c)).join('')}</ul>`}</section>`;
+      ${visual ? `<ul class="vgrid">${list.map(c => cardTile(deck, c)).join('')}</ul>` : `<ul class="clist">${list.map(c => cardRow(deck, c)).join('')}</ul>`}</section>`;
   }).join('');
   const issues = deckIssues(deck);
   const miss = missingCards(deck);
@@ -649,18 +667,26 @@ function tabList(deck, tab) {
           <p class="muted small">Rollerna gissas från korttexten. Klicka på ett kort och välj Roll om gissningen är fel.</p></div>
         <div class="card"><h2>Samling</h2>
           <p>${miss.length ? `Du saknar <b>${miss.reduce((a, c) => a + c.missing, 0)}</b> kort (${miss.length} olika).` : '<b>Du har alla kort!</b>'}</p>
+          ${taken.length ? `<p class="small" style="margin:.2rem 0">${taken.length} av korten finns i din samling men sitter i en ihopbyggd lek:</p>
+            <ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${taken.map(x => `<li><b>${esc(x.name)}</b> – ${esc(x.where)}</li>`).join('')}</ul>` : ''}
+          ${S.v6 ? `<label class="small row" title="Korten i leken räknas som upptagna i dina andra lekar"><input type="checkbox" id="built" ${deck.built ? 'checked' : ''}> Leken är ihopbyggd</label>` : ''}
           <label class="small row"><input type="checkbox" id="basics" ${S.basicsOwned ? 'checked' : ''}> Räkna basländer som ägda</label>
           <div class="row" style="margin-top:.6rem"><button class="btn small" id="ownAll">Bocka i alla</button><button class="btn small" id="toBuy">Till köplistan →</button></div>
-          <p class="muted small">Bocka i rutan framför ett kort när du har det. Det sparas i din samling och gäller alla lekar.</p>
+          <p class="muted small">Bocka i rutan framför ett kort när du har det. Det sparas i din samling och gäller alla lekar.${S.v6 ? ' Bocka i Leken är ihopbyggd när korten sitter i leken, så räknas de som upptagna i dina andra lekar.' : ''}</p>
         </div>
       </div>
     </div>`;
   addCardUI($('#addBar'), name => addToDeck(deck, name, $('#addBoard').value));
+  if ($('#built')) $('#built').onchange = async e => {
+    const on = e.target.checked;
+    deck.built = on; render();
+    try { await api('/api/decks/' + deck.id, { method: 'PUT', body: { built: on } }); } catch (err) { deck.built = !on; render(); toast('Kunde inte spara: ' + err.message); }
+  };
   $('#basics').onchange = e => { S.basicsOwned = e.target.checked; try { localStorage.setItem('basicsOwned', S.basicsOwned ? '1' : '0'); } catch {} render(); };
   $('#toBuy').onclick = () => { S.tab = 'kop'; render(); };
   $('#ownAll').onclick = async () => {
     const body = {};
-    for (const m of missingCards(deck)) body[m.name] = m.qty;
+    for (const m of missingCards(deck)) body[m.name] = ownTarget(m.name, deck, m.qty);
     Object.assign(S.collection, body);
     await api('/api/collection', { method: 'PUT', body }); render();
   };
@@ -668,7 +694,7 @@ function tabList(deck, tab) {
     if (!e.target.matches('[data-own]')) return;
     const li = e.target.closest('li'), name = li.dataset.name;
     const need = deck.cards.filter(c => c.name === name && c.board !== 'maybe').reduce((a, c) => a + c.qty, 0) || 1;
-    await setOwned(name, e.target.checked ? Math.max(S.collection[name] || 0, need) : 0);
+    await setOwned(name, e.target.checked ? ownTarget(name, deck, need) : Math.min(S.collection[name] || 0, reserved(name, deck)));
     render();
   });
   tab.addEventListener('click', e => {
@@ -1011,6 +1037,7 @@ function tabBuy(deck, tab) {
   }
   const checked = miss.filter(m => S.alara[m.name]).length;
   const wants = (checked ? rest : miss).map(m => `${m.missing} ${m.name}`).join('\n');
+  const inBuilt = Object.fromEntries(takenCards(deck).map(x => [x.name, x.where]));
   if (S.cloud && !S.trades) loadTrades().then(() => S.tab === 'kop' && tab.isConnected && render());
   const offers = tradeIndex();
   const sel = tabBuy.sel || (tabBuy.sel = new Set());
@@ -1033,7 +1060,7 @@ function tabBuy(deck, tab) {
                   ${r.offers.length > 1 ? `<details class="small"><summary class="muted">${r.offers.length - 1} till</summary>${r.offers.slice(1).map(x => `<div><a href="${esc(x.url)}" target="_blank" rel="noopener">${kr(x.price)}</a> ${esc(x.condition)} – <span class="muted">${esc(x.title)}</span></div>`).join('')}</details>` : ''}</div>`
               : '<span class="pill warn">ej i lager</span>';
             const fr = offers[m.name.toLowerCase()] || [];
-            return `<tr data-name="${esc(m.name)}"><td><input type="checkbox" data-sel ${sel.has(m.name) ? 'checked' : ''}></td><td><span data-img="${esc(info?.image || '')}">${esc(m.name)}</span><div class="muted small">ca ${eur(info?.eur)}</div></td>
+            return `<tr data-name="${esc(m.name)}"><td><input type="checkbox" data-sel ${sel.has(m.name) ? 'checked' : ''}></td><td><span data-img="${esc(info?.image || '')}">${esc(m.name)}</span><div class="muted small">ca ${eur(info?.eur)}${inBuilt[m.name] ? ` · du har kortet i ${esc(inBuilt[m.name])}` : ''}</div></td>
               <td class="num">${m.missing}</td><td>${cell}</td>${S.cloud ? `<td class="small">${fr.map(t => `<div title="Till byte">⇄ ${esc(t.ownerName)} har ${t.qty}</div>`).join('') || '<span class="muted">–</span>'}</td>` : ''}<td><div class="links">${buyLinks(m.name).replace(/<a href="https:\/\/www\.alaragames[^>]*>Alara<\/a>/, '')}</div></td>
               <td><button class="btn small" data-got title="Jag har köpt/fått kortet">Har ✓</button></td></tr>`;
           }).join('')}</tbody></table></div>
@@ -1076,7 +1103,7 @@ function tabBuy(deck, tab) {
   if ($('#prSel')) $('#prSel').onclick = () => printProxies(miss.filter(m => sel.has(m.name)).flatMap(m => Array(m.missing).fill(m.name)));
   $('#gotSel').onclick = async () => {
     const body = {};
-    for (const m of miss) if (sel.has(m.name)) body[m.name] = (S.collection[m.name] || 0) + m.missing;
+    for (const m of miss) if (sel.has(m.name)) body[m.name] = ownTarget(m.name, deck, m.qty);
     Object.assign(S.collection, body);
     await api('/api/collection', { method: 'PUT', body });
     toast(`${Object.keys(body).length} kort lagda i samlingen`); sel.clear(); render();
@@ -1085,7 +1112,7 @@ function tabBuy(deck, tab) {
     const b = e.target.closest('[data-got]'); if (!b) return;
     const name = b.closest('tr').dataset.name;
     const need = deck.cards.filter(c => c.name === name && c.board !== 'maybe').reduce((a, c) => a + c.qty, 0);
-    await setOwned(name, Math.max(S.collection[name] || 0, need)); render();
+    await setOwned(name, ownTarget(name, deck, need)); render();
   });
   // körningen fortsätter även om sidan ritas om; knappen visar bara läget
   const showRun = () => {
@@ -1346,10 +1373,17 @@ function sharedShortage() {
   }
   return out;
 }
+// lekens kort som saknas för att ex sitter i ihopbyggda lekar
+function takenCards(deck) {
+  return missingCards(deck).filter(m => owned(m.name) > free(m.name, deck)).map(m => {
+    const where = builtIn(m.name).map(x => x.name).join(', ');
+    return { name: m.name, where, text: `${m.name} sitter i ${where}` };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
 // andel av lekens kort (exkl. kanske) som finns i samlingen
 function ownedShare(d) {
   let need = 0, have = 0;
-  for (const c of d.cards) if (c.board !== 'maybe') { need += c.qty; have += Math.min(c.qty, owned(c.name)); }
+  for (const c of d.cards) if (c.board !== 'maybe') { need += c.qty; have += Math.min(c.qty, free(c.name, d)); }
   return need ? have / need : 1;
 }
 function deckArt(d) {
@@ -1508,7 +1542,7 @@ function viewPublicDeck(id) {
     <div class="grid cols-2" style="margin-top:1rem">
       <div class="card"><div class="cols-cards">${order.filter(k => groups[k]).map(k => `<section><div class="section-head"><h3>${TYPE_SV[k]}</h3><span class="muted small">${groups[k].reduce((a, c) => a + c.qty, 0)}</span></div>
         <ul class="clist">${groups[k].sort((a, b) => (S.cards[a.name]?.cmc ?? 99) - (S.cards[b.name]?.cmc ?? 99) || a.name.localeCompare(b.name)).map(c => {
-          const have = owned(c.name) >= c.qty;
+          const have = free(c.name, d) >= c.qty;
           return `<li class="${have ? 'owned' : ''}"><span style="width:1.05rem" class="good">${have ? '✓' : ''}</span><span class="q">${c.qty}</span><span class="nm" data-img="${esc(S.cards[c.name]?.image || '')}">${esc(c.name)}</span><span class="mana">${S.cards[c.name] ? manaHtml(S.cards[c.name].mana_cost) : ''}</span></li>`;
         }).join('')}</ul></section>`).join('')}</div></div>
       <div class="grid" style="align-content:start">
