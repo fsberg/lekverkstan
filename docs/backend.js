@@ -8,7 +8,7 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
-  let v2 = false, v4 = false;
+  let v2 = false, v4 = false, v7 = false;
   const colQty = {}; // egna antal, för att veta när ett kort läggs till (sortering på senast inlagt)
   let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
@@ -71,10 +71,10 @@
     if (keys.length > 4000) for (const k of keys.slice(0, keys.length - 4000)) delete cardCache[k];
     ls.set('lv-cards', cardCache);
   }
-  async function lookupCards(names) {
+  async function lookupCards(names, fresh) {
     const want = [...new Set(names.map(n => n.trim()).filter(Boolean))];
     // v3: billigaste utgåvan (prefer:eur-low), så att dyra specialutgåvor inte blåser upp värdet
-    const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 3);
+    const missing = want.filter(n => fresh || cardCache[n.toLowerCase()]?.v !== 3);
     const notFound = [], rest = [];
     for (let i = 0; i < missing.length; i += 25) {
       const part = missing.slice(i, i + 25);
@@ -208,7 +208,7 @@
       ]);
       fail(d.error); fail(c.error);
       // v2-tabeller: saknas de (gammal databas) blir det bara tomt
-      const [t, g, pr, w, l, cm, bu] = await Promise.all([
+      const [t, g, pr, w, l, cm, bu, sh, ev] = await Promise.all([
         sb.from('lv_collection').select('name, for_trade').eq('owner', user.id).gt('for_trade', 0),
         sb.from('lv_games').select('*').order('played_on', { ascending: false }).order('created', { ascending: false }),
         sb.from('lv_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
@@ -219,7 +219,11 @@
         sb.from('lv_collection').select('name, added, prints').eq('owner', user.id),
         // v6: ihopbyggda lekar
         sb.from('lv_decks').select('built').limit(0),
+        // v7: topplista och spelkvällar
+        sb.from('lv_profiles').select('share_games').eq('user_id', user.id).maybeSingle(),
+        sb.from('lv_events').select('id').limit(0),
       ]);
+      v7 = !ev.error && !sh.error;
       v4 = !cm.error;
       for (const k of Object.keys(colQty)) delete colQty[k];
       for (const r of c.data) colQty[r.name] = r.qty;
@@ -230,16 +234,16 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
-        v3: !w.error, v4, v6: !bu.error,
+        v3: !w.error, v4, v6: !bu.error, v7,
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
-        profile: { name: pr.data?.display_name || '', email: user.email },
+        profile: { name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games },
         cloud: true,
         settings: { svenskaMagicUrl: ls.get('lv-sm-url', SM_DEFAULT) },
       };
     }
     if (p === '/api/profile' && m === 'PUT') {
       const name = String(body.name || '').trim().slice(0, 40);
-      fail((await sb.from('lv_profiles').upsert({ user_id: user.id, display_name: name })).error);
+      fail((await sb.from('lv_profiles').upsert({ user_id: user.id, display_name: name, ...(typeof body.share === 'boolean' ? { share_games: body.share } : {}) })).error);
       return { name };
     }
     if (p === '/api/trade' && m === 'PUT') {
@@ -254,6 +258,51 @@
       if (!ids.length) return {};
       const { data } = await sb.from('lv_profiles').select('user_id, display_name').in('user_id', [...new Set(ids)]);
       return Object.fromEntries((data || []).map(r => [r.user_id, r.display_name]));
+    }
+    if (p === '/api/leaderboard') {
+      if (!v7) return [];
+      const { data, error } = await sb.rpc('lv_leaderboard');
+      fail(error); return data;
+    }
+    if (p === '/api/value-log' && m === 'GET') {
+      if (!v7) return [];
+      const { data, error } = await sb.from('lv_value_log').select('day, value_eur, cards, prices').order('day', { ascending: false }).limit(400);
+      fail(error); return data.map(x => ({ ...x, value_eur: +x.value_eur }));
+    }
+    if (p === '/api/value-log' && m === 'PUT') {
+      const { data, error } = await sb.from('lv_value_log').upsert({ owner: user.id, day: new Date().toISOString().slice(0, 10), value_eur: Math.max(0, +body.value_eur || 0), cards: Math.max(0, body.cards | 0), prices: body.prices || {} })
+        .select('day, value_eur, cards, prices').single();
+      fail(error); return { ...data, value_eur: +data.value_eur };
+    }
+    if (p === '/api/events' && m === 'GET') {
+      if (!v7) return [];
+      const { data, error } = await sb.from('lv_events').select('*').order('created', { ascending: false }).limit(50);
+      fail(error);
+      const ids = data.map(e => e.id);
+      const { data: reps, error: e2 } = ids.length ? await sb.from('lv_event_replies').select('*').in('event', ids) : { data: [] };
+      fail(e2);
+      const nm = await names([...data.map(e => e.owner), ...reps.map(r => r.user_id)]);
+      return data.map(e => ({ ...e, mine: e.owner === user.id, ownerName: nm[e.owner] || 'Okänd',
+        replies: reps.filter(r => r.event === e.id).map(r => ({ ...r, mine: r.user_id === user.id, name: nm[r.user_id] || 'Okänd' })) }));
+    }
+    const when = a => (Array.isArray(a) ? a : []).filter(x => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(x)).slice(0, 6);
+    if (p === '/api/events' && m === 'POST') {
+      const { data, error } = await sb.from('lv_events').insert({ title: String(body.title || '').slice(0, 80), place: String(body.place || '').slice(0, 120), note: String(body.note || '').slice(0, 500), options: when(body.options) }).select().single();
+      fail(error); return data;
+    }
+    const evm = p.match(/^\/api\/events\/([\w-]+)$/);
+    if (evm && m === 'PUT') {
+      const patch = { updated: new Date().toISOString() };
+      if (typeof body.chosen === 'string') patch.chosen = when([body.chosen])[0] || null;
+      if (Array.isArray(body.pods)) patch.pods = body.pods.slice(0, 20);
+      const { data, error } = await sb.from('lv_events').update(patch).eq('id', evm[1]).select().single();
+      fail(error); return data;
+    }
+    if (evm && m === 'DELETE') { fail((await sb.from('lv_events').delete().eq('id', evm[1])).error); return { ok: true }; }
+    const rvm = p.match(/^\/api\/events\/([\w-]+)\/reply$/);
+    if (rvm && m === 'PUT') {
+      const { error } = await sb.from('lv_event_replies').upsert({ event: rvm[1], user_id: user.id, dates: when(body.dates), deck_name: String(body.deck_name || '').slice(0, 80), bracket: body.bracket >= 1 && body.bracket <= 5 ? body.bracket | 0 : null, updated: new Date().toISOString() });
+      fail(error); return { ok: true };
     }
     if (p === '/api/public-decks') {
       const { data, error } = await sb.from('lv_decks').select('id, owner, name, format, cards, notes, updated').eq('public', true).neq('owner', user.id).order('updated', { ascending: false }).limit(200);
@@ -383,7 +432,7 @@
       return { svenskaMagicUrl: ls.get('lv-sm-url', SM_DEFAULT) };
     }
 
-    if (p === '/api/cards') return lookupCards(Array.isArray(body.names) ? body.names.slice(0, 400) : []);
+    if (p === '/api/cards') return lookupCards(Array.isArray(body.names) ? body.names.slice(0, 400) : [], !!body.fresh);
     if (p === '/api/search') {
       const { status, body: b } = await scry('https://api.scryfall.com/cards/search?order=edhrec&q=' + encodeURIComponent((url.searchParams.get('q') || '') + ' prefer:eur-low'));
       if (status === 404) return { cards: [], total: 0 };

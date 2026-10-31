@@ -11,7 +11,7 @@ const S = { decks: [], collection: {}, settings: {}, cards: {}, alara: {}, tab: 
 try { S.basicsOwned = localStorage.getItem('basicsOwned') !== '0'; S.view = localStorage.getItem('lv-view') || 'lista'; } catch {}
 Object.assign(S, { trade: {}, games: [], profile: { name: '' }, cloud: false, trades: null, publicDecks: null, edhrec: {} });
 Object.assign(S, { wishlist: [], loans: [], v3: false, rate: 11.5, combos: {}, offline: false });
-Object.assign(S, { colmeta: {}, v4: false, bookings: null });
+Object.assign(S, { colmeta: {}, v4: false, bookings: null, v6: false, v7: false, events: null, valueLog: null });
 try { S.group = localStorage.getItem('lv-group') || 'typ'; } catch {}
 // ungefärligt värde i kronor från Scryfalls europris
 const krE = e => e == null ? '–' : Math.round(e * S.rate).toLocaleString('sv-SE') + ' kr';
@@ -35,13 +35,17 @@ function toast(msg, ms = 2200) {
   clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), ms);
 }
 
-async function ensureCards(names) {
-  const need = [...new Set(names)].filter(n => !S.cards[n] && !S.notFound.has(n));
-  if (!need.length) return [];
-  const { cards, notFound } = await api('/api/cards', { method: 'POST', body: { names: need } });
-  Object.assign(S.cards, cards);
-  for (const n of need) if (!cards[n]) S.notFound.add(n);
-  return notFound;
+async function ensureCards(names, fresh) {
+  const need = [...new Set(names)].filter(n => fresh || (!S.cards[n] && !S.notFound.has(n)));
+  const missing = [];
+  for (let i = 0; i < need.length; i += 400) {
+    const part = need.slice(i, i + 400);
+    const { cards, notFound } = await api('/api/cards', { method: 'POST', body: { names: part, fresh: !!fresh } });
+    Object.assign(S.cards, cards);
+    for (const n of part) if (!cards[n]) S.notFound.add(n);
+    missing.push(...notFound);
+  }
+  return missing;
 }
 
 const saveDeckSoon = (() => {
@@ -478,6 +482,7 @@ function viewDecks() {
   app.innerHTML = `
     <div class="row"><h1>Mina lekar</h1><span class="spacer"></span>
       <label class="small">Sortera <select id="deckSort"><option value="updated">Senast ändrad</option><option value="owned">Mest komplett</option><option value="name">Namn</option></select></label>
+      <a class="btn" href="#/bygg">Bygg från samlingen</a>
       <button class="btn primary" id="newDeck">+ Ny lek</button></div>
     ${S.decks.length ? `<div class="deck-grid">${tiles}</div>` : `<div class="card empty" style="margin-top:1rem">Inga lekar än. Skapa en ny, eller klistra in en lista från Moxfield/Archidekt.</div>`}`;
   $('#deckSort').value = sortBy;
@@ -671,7 +676,7 @@ function tabList(deck, tab) {
             <ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${taken.map(x => `<li><b>${esc(x.name)}</b> – ${esc(x.where)}</li>`).join('')}</ul>` : ''}
           ${S.v6 ? `<label class="small row" title="Korten i leken räknas som upptagna i dina andra lekar"><input type="checkbox" id="built" ${deck.built ? 'checked' : ''}> Leken är ihopbyggd</label>` : ''}
           <label class="small row"><input type="checkbox" id="basics" ${S.basicsOwned ? 'checked' : ''}> Räkna basländer som ägda</label>
-          <div class="row" style="margin-top:.6rem"><button class="btn small" id="ownAll">Bocka i alla</button><button class="btn small" id="toBuy">Till köplistan →</button></div>
+          <div class="row" style="margin-top:.6rem"><button class="btn small" id="ownAll">Bocka i alla</button><button class="btn small" id="pickGo">Plockguide</button><button class="btn small" id="toBuy">Till köplistan →</button></div>
           <p class="muted small">Bocka i rutan framför ett kort när du har det. Det sparas i din samling och gäller alla lekar.${S.v6 ? ' Bocka i Leken är ihopbyggd när korten sitter i leken, så räknas de som upptagna i dina andra lekar.' : ''}</p>
         </div>
       </div>
@@ -684,6 +689,7 @@ function tabList(deck, tab) {
   };
   $('#basics').onchange = e => { S.basicsOwned = e.target.checked; try { localStorage.setItem('basicsOwned', S.basicsOwned ? '1' : '0'); } catch {} render(); };
   $('#toBuy').onclick = () => { S.tab = 'kop'; render(); };
+  $('#pickGo').onclick = () => pickModal(deck);
   $('#ownAll').onclick = async () => {
     const body = {};
     for (const m of missingCards(deck)) body[m.name] = ownTarget(m.name, deck, m.qty);
@@ -769,6 +775,7 @@ function tabStats(deck, tab) {
   const { Länder: _l, ...roleCount } = roleCounts(deck);
   const pipNames = { W: 'Vit', U: 'Blå', B: 'Svart', R: 'Röd', G: 'Grön', C: 'Färglös' };
   const pipMax = Math.max(1, ...Object.values(pips));
+  const sources = colorCheck(deck, pips);
   const hbars = (obj, names = {}) => `<div class="hbars">${Object.entries(obj).map(([k, v]) => `<span>${names[k] || TYPE_SV[k] || k}</span><div class="track"><div class="fill" style="width:${(v / Math.max(1, ...Object.values(obj))) * 100}%"></div></div><span class="n">${v}</span>`).join('')}</div>`;
   tab.innerHTML = `
     <div class="stats">
@@ -782,6 +789,10 @@ function tabStats(deck, tab) {
     <div class="grid cols-2" style="margin-top:1rem">
       <div class="card"><h2>Manakurva <span class="muted small">(icke-länder)</span></h2>${barChart(curve, ['0', '1', '2', '3', '4', '5', '6', '7+'], (l, v) => `${v} kort med manavärde ${l}`)}</div>
       <div class="card"><h2>Färgsymboler</h2>${Object.values(pips).some(Boolean) ? `<div class="hbars">${Object.entries(pips).filter(([, v]) => v).map(([k, v]) => `<span><span class="sym ${k}">${k}</span> ${pipNames[k]}</span><div class="track"><div class="fill" style="width:${(v / pipMax) * 100}%"></div></div><span class="n">${v}</span>`).join('')}</div>` : '<p class="muted">Inga färgade kort än.</p>'}</div>
+      ${sources.length ? `<div class="card"><h2>Färgkällor</h2><table class="small"><thead><tr><th>Färg</th><th class="num">Symboler</th><th class="num">Länder</th><th class="num">Ramp</th><th class="num">Bör ha</th></tr></thead><tbody>
+        ${sources.map(r => `<tr><td><span class="sym ${r.c}">${r.c}</span> ${pipNames[r.c]}</td><td class="num">${r.pips}</td><td class="num ${r.low ? 'warn' : ''}"><b>${r.lands}</b></td><td class="num">${r.other}</td><td class="num muted">${r.want ? `ca ${r.want}` : '–'}</td></tr>`).join('')}</tbody></table>
+        ${sources.some(r => r.low) ? `<p class="warn small">För få länder ger ${sources.filter(r => r.low).map(r => pipNames[r.c].toLowerCase()).join(' och ')}.</p>` : '<p class="good small">Färgerna ser balanserade ut.</p>'}
+        <p class="muted small">Tumregel: länder per färg efter hur många symboler färgen har. Ramp är kort för högst 3 mana som ger färgen.</p></div>` : ''}
       <div class="card"><h2>Korttyper</h2>${hbars(types)}</div>
       <div class="card"><h2>Roller <span class="muted small">(gissning från korttexten)</span></h2>${hbars(roleCount)}
         ${deck.format === 'commander' ? '<p class="muted small">Tumregel för Commander: ca 36–38 länder, 10 ramp, 10 kortdragning, 8–10 removal och 2–3 massborttagningar.</p>' : ''}</div>
@@ -887,23 +898,24 @@ function tabSuggest(deck, tab) {
   const cmd = deck.cards.filter(c => c.board === 'commander').map(c => c.name);
   if (!cmd.length) { tab.innerHTML = '<div class="card empty">Välj en befälhavare först (★ på ett kort i listan).</div>'; return; }
   const opt = tabSuggest.opt || (tabSuggest.opt = { hideIn: true, onlyOwned: false });
+  const isFree = n => free(n, deck) > 0;
   tab.innerHTML = `<div class="card"><p class="muted">Hämtar förslag från EDHREC för ${esc(cmd.join(' + '))}…</p></div>`;
   edhrecFor(cmd).then(data => {
     if (!tab.isConnected) return;
     if (!data) { tab.innerHTML = '<div class="card empty">EDHREC har ingen sida för den här befälhavaren än.</div>'; return; }
     const inDeck = new Set(deck.cards.map(c => c.name.toLowerCase()));
-    const show = c => !(opt.hideIn && inDeck.has(c.name.toLowerCase())) && !(opt.onlyOwned && !owned(c.name));
+    const show = c => !(opt.hideIn && inDeck.has(c.name.toLowerCase())) && !(opt.onlyOwned && !isFree(c.name));
     tab.innerHTML = `<div class="card">
       <div class="row"><h2 style="margin:0">Populärt med ${esc(cmd.join(' + '))}</h2><span class="spacer"></span>
         <label class="small"><input type="checkbox" id="sgHide" ${opt.hideIn ? 'checked' : ''}> Dölj kort i leken</label>
-        <label class="small"><input type="checkbox" id="sgOwned" ${opt.onlyOwned ? 'checked' : ''}> Bara kort jag äger</label></div>
+        <label class="small"><input type="checkbox" id="sgOwned" ${opt.onlyOwned ? 'checked' : ''}> Bara lediga kort jag äger</label></div>
       <p class="muted small">${data.decks ? `Bygger på ${data.decks.toLocaleString('sv-SE')} lekar på EDHREC. ` : ''}Andel = hur stor del av lekarna med den här befälhavaren som spelar kortet. Synergi = hur mycket vanligare kortet är här än i andra lekar.
         <a href="https://edhrec.com/commanders/${esc(data.slug)}" target="_blank" rel="noopener">Öppna på EDHREC</a></p>
       ${data.lists.map(l => {
-        const cards = l.cards.filter(show);
+        const cards = l.cards.filter(show).sort((a, b) => isFree(b.name) - isFree(a.name));
         if (!cards.length) return '';
         return `<h3>${esc(EDH_SV[l.header] || l.header)}</h3><div class="table-scroll"><table class="small"><tbody>${cards.map(c => `<tr>
-          <td style="width:1.4rem">${owned(c.name) ? '<span title="Du äger kortet" class="good">✓</span>' : ''}</td>
+          <td style="width:1.4rem">${isFree(c.name) ? '<span title="Du har kortet ledigt" class="good">✓</span>' : owned(c.name) ? `<span title="Sitter i ${esc(builtIn(c.name).map(x => x.name).join(', '))}" class="shared">⇄</span>` : ''}</td>
           <td><span data-img="${esc(scryImg(c.name))}" data-sname="${esc(c.name)}" style="cursor:pointer">${esc(c.name)}</span></td>
           <td class="num">${c.incl != null ? Math.round(c.incl * 100) + ' %' : ''}</td>
           <td class="num muted">${c.synergy != null ? (c.synergy > 0 ? '+' : '') + Math.round(c.synergy * 100) + ' %' : ''}</td>
@@ -1041,6 +1053,10 @@ function tabBuy(deck, tab) {
   if (S.cloud && !S.trades) loadTrades().then(() => S.tab === 'kop' && tab.isConnected && render());
   const offers = tradeIndex();
   const sel = tabBuy.sel || (tabBuy.sel = new Set());
+  let budget = 0;
+  try { budget = +JSON.parse(localStorage.getItem('lv-budget') || '{}')[deck.id] || 0; } catch {}
+  const priceOf = n => pickOffer(S.alara[n])?.price ?? (S.cards[n]?.eur != null ? S.cards[n].eur * S.rate : null);
+  const plan = budget ? budgetPlan(deck, miss, budget, priceOf) : null;
   tab.innerHTML = miss.length ? `
     <div class="grid cols-2">
       <div class="card">
@@ -1072,6 +1088,13 @@ function tabBuy(deck, tab) {
             : '<p class="muted">Tryck på "Kolla lagret hos Alara" för priser i kronor. Det tar ungefär en sekund per kort.</p>'}
           ${checked < miss.length && checked ? `<p class="small warn">${miss.length - checked} kort är inte kollade än.</p>` : ''}
         </div>
+        <div class="card"><h2>Budget</h2>
+          <label class="small row">Jag vill lägga <input type="number" id="bgMax" min="0" max="1000000" step="50" value="${budget || ''}" placeholder="500" style="width:6rem"> kr</label>
+          ${plan ? `<p>${plan.picks.length} av ${plan.picks.length + plan.skipped + plan.noPrice} kort för <b>${kr(plan.cost)}</b>.</p>
+            <ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${plan.picks.map(x => `<li>${esc(x.name)} <span class="muted">${kr(x.price)}</span></li>`).join('')}</ul>
+            ${plan.noPrice ? `<p class="small warn">${plan.noPrice} kort saknar pris.</p>` : ''}
+            ${plan.picks.length ? '<button class="btn small" id="bgSel">Markera dessa</button>' : ''}` : ''}
+          <p class="muted small">Befälhavaren och det leken har för lite av kommer först. Alarapriset används om det finns, annars Cardmarket-trend utan frakt.</p></div>
         <div class="card"><h2>Önskelista för Cardmarket</h2>
           <p class="small muted">${checked ? 'Korten som Alara inte har i lager.' : 'Alla kort du saknar.'}</p>
           <textarea id="wants" readonly style="min-height:160px">${esc(wants)}</textarea>
@@ -1115,6 +1138,15 @@ function tabBuy(deck, tab) {
     await setOwned(name, ownTarget(name, deck, need)); render();
   });
   // körningen fortsätter även om sidan ritas om; knappen visar bara läget
+  $('#bgMax').onchange = e => {
+    try {
+      const all = JSON.parse(localStorage.getItem('lv-budget') || '{}');
+      if (+e.target.value > 0) all[deck.id] = +e.target.value; else delete all[deck.id];
+      localStorage.setItem('lv-budget', JSON.stringify(all));
+    } catch {}
+    render();
+  };
+  if ($('#bgSel')) $('#bgSel').onclick = () => { sel.clear(); for (const x of plan.picks) sel.add(x.name); render(); };
   const showRun = () => {
     const run = S.alaraRun, btn = $('#runAlara'), prog = $('#prog');
     if (!run || !btn) return;
@@ -1215,6 +1247,7 @@ function viewCollection() {
   const total = names.reduce((a, n) => a + S.collection[n], 0);
   const value = names.reduce((a, n) => a + colValue(n), 0);
   refreshPrintPrices();
+  valueSnapshot();
   const used = {};
   for (const d of S.decks) for (const c of d.cards) if (c.board !== 'maybe') (used[c.name] = used[c.name] || new Set()).add(d.name);
   let show = viewCollection.show || 'alla';
@@ -1252,6 +1285,7 @@ function viewCollection() {
           </tbody></table></div>` : `<div class="empty">${names.length ? 'Inga kort med det filtret.' : 'Samlingen är tom. Bocka i kort i dina lekar, sök ovan, eller klistra in en lista till höger.'}</div>`}
       </div>
       <div class="grid" style="align-content:start">
+        ${valueCard()}
         <div class="card"><h2>Skanna kort</h2>
           <p class="small muted">Håll upp korten framför kameran ett i taget. Appen läser namnet och lägger till kortet.</p>
           <button class="btn primary" id="scanGo">📷 Starta kameran</button></div>
@@ -1261,6 +1295,7 @@ function viewCollection() {
         <p class="muted small">Antalen läggs ovanpå det du redan har.</p></div></div>
     </div></div>`;
   $('#scanGo').onclick = () => scanModal();
+  hookTips($('#app'));
   if ($('#colSort')) $('#colSort').onchange = e => { viewCollection.sort = e.target.value; render(); };
   if ($('#loanCard')) addCardUI($('#loanCard'), async name => {
     const to = $('#loanTo').value.trim();
@@ -1566,7 +1601,9 @@ function deckRecord(games) {
   r.pct = r.n ? Math.round(r.win / r.n * 100) : 0;
   return r;
 }
-function viewGames() {
+function viewGames(sub) {
+  sub = S.cloud && S.v7 && ['topplista', 'spelkvall'].includes(sub) ? sub : '';
+  if (sub) return viewGroup(sub);
   setNav('matcher');
   const today = new Date().toISOString().slice(0, 10);
   const byDeck = {};
@@ -1575,6 +1612,7 @@ function viewGames() {
   const total = deckRecord(S.games);
   $('#app').innerHTML = `<div id="gm"><div class="row"><h1>Matcher</h1><span class="spacer"></span><span class="muted">${total.n} matcher · ${total.pct} % vinster</span>
       <a class="btn primary" href="#/liv">▶ Livräknare${lifeState()?.players ? ' (pågår)' : ''}</a></div>
+    ${gameTabs('')}
     <div class="grid cols-2" style="margin-top:1rem">
       <div class="grid" style="align-content:start">
         <div class="card"><h2>Per lek</h2>${stats.length ? `<table><thead><tr><th>Lek</th><th class="num">Matcher</th><th class="num">V–F–O</th><th class="num">Vinst</th></tr></thead><tbody>
@@ -1594,7 +1632,7 @@ function viewGames() {
         <p><input type="text" id="gOpp" placeholder="Mot vilka? T.ex. Jonte (Atraxa), Kalle (Krenko)" style="width:100%" maxlength="300"></p>
         <p><input type="text" id="gNotes" placeholder="Anteckning (valfritt)" style="width:100%" maxlength="1000"></p>
         <p class="row"><span class="spacer"></span><button class="btn primary" id="gSave">Spara match</button></p>
-        <p class="muted small">Spelloggen är privat, ingen annan ser den.</p></div>
+        <p class="muted small">${S.cloud && S.v7 ? 'Spelloggen är privat om du inte väljer att visa den i Topplistan. Anteckningar syns aldrig.' : 'Spelloggen är privat, ingen annan ser den.'}</p></div>
     </div></div>`;
   let result = 'win';
   $('#gDeck').onchange = e => { $('#gOtherWrap').hidden = !!e.target.value; };
@@ -2044,7 +2082,7 @@ function viewLife(code) {
     $('#app').innerHTML = `<div class="card" style="max-width:520px;margin:0 auto"><h1>Vem är du?</h1>
       <div class="grid">${s.players.map((p, i) => `<button class="btn" data-seat="${i}">${esc(p.name)}${taken[i] && taken[i] !== CID ? ' <span class="muted small">(vald av någon)</span>' : ''}</button>`).join('')}</div>
       <p><label class="small">Ditt namn<br><input type="text" id="lMyName" maxlength="20" placeholder="Lämna tomt för att behålla" style="width:100%" value="${esc(S.profile?.name || '')}"></label></p>
-      <p><label class="small">Min lek (för spelloggen)<br><select id="lDeck" style="width:100%"><option value="">Logga inte matchen</option>${S.decks.map(d => `<option value="${d.id}" ${d.id === s.myDeck ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label></p></div>`;
+      <p><label class="small">Min lek (för spelloggen)<br><select id="lDeck" style="width:100%"><option value="">Logga inte matchen</option>${S.decks.map(d => `<option value="${d.id}" ${d.id === (s.myDeck || lastDeckId()) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label></p></div>`;
     $('#app').onclick = e => {
       const b = e.target.closest('[data-seat]'); if (!b) return;
       $('#app').onclick = null;
@@ -2146,6 +2184,7 @@ function lifeMore(i) {
     };
   });
 }
+const lastDeckId = () => S.decks.slice().sort((a, b) => b.updated - a.updated)[0]?.id || '';
 function lifeEnd() {
   const s = lifeState();
   const alive = s.players.map((p, i) => ({ p, i })).filter(x => !isOut(x.p, s));
@@ -2413,6 +2452,12 @@ function notifications() {
     if (!b.mine && b.status === 'requested') out.push({ at, href: '#/utforska/bokningar', isNew: true, text: `${b.other} vill boka ${b.qty} × ${b.name}`, sub: b.note ? `”${b.note}”` : 'Svara under Bokningar' });
     else if (b.mine && ['accepted', 'declined', 'done'].includes(b.status)) out.push({ at, href: '#/utforska/bokningar', isNew: at > seen, text: `${b.other} ${b.status === 'accepted' ? 'godkände' : b.status === 'declined' ? 'nekade' : 'har lämnat över'} ${b.name}`, sub: b.reply ? `”${b.reply}”` : BOOK_SV[b.status] });
   }
+  const evSeen = eventsSeenAt();
+  for (const e of (S.events || []).filter(x => !x.mine && eventActive(x))) {
+    const at = Date.parse(e.updated) || 0;
+    if (e.chosen) out.push({ at, href: '#/matcher/spelkvall', isNew: at > evSeen, text: `${e.title}: ${evDate(e.chosen)}`, sub: e.place || `${e.ownerName} har bestämt tiden` });
+    else if (at > evSeen) out.push({ at, href: '#/matcher/spelkvall', isNew: true, text: `${e.ownerName} bjuder in: ${e.title}`, sub: 'Säg vilka tider du kan' });
+  }
   const ls = lifeState();
   if (ls?.room && ls.players) out.push({ at: Date.now(), href: '#/liv/' + ls.room, isNew: false, text: 'Pågående delad match', sub: `Kod ${ls.room} · tryck för att gå tillbaka` });
   return out.sort((a, b) => b.isNew - a.isNew || b.at - a.at);
@@ -2433,7 +2478,7 @@ function drawNotes() {
       : `<p class="muted small" style="padding:.8rem">Inget nytt. Här hamnar önskekort som kommer i lager${S.cloud ? ', bokningar i bytesbörsen och svar på dina bokningar' : ''}.</p>`}`;
   if ($('#notesSeen')) $('#notesSeen').onclick = async e => {
     e.stopPropagation();
-    markBookingsSeen();
+    markBookingsSeen(); markEventsSeen();
     for (const w of S.wishlist.filter(x => x.alert)) await saveWish({ name: w.name, alert: false }).catch(() => {});
     updateWishBadge(); updateBookBadge(); updateBell();
   };
@@ -2442,12 +2487,17 @@ $('#bell').onclick = e => {
   e.stopPropagation();
   if ($('#notes')) return $('#notes').remove();
   drawNotes();
-  if (S.cloud && S.v4 && !S.offline) loadBookings(true).then(updateBell);
+  syncNotes();
 };
 document.addEventListener('click', e => { const n = $('#notes'); if (n && (!n.contains(e.target) || e.target.closest('a.note'))) setTimeout(() => n.remove(), 0); });
 // håll klockan aktuell: hämta bokningar varannan minut och när appen kommer tillbaka i förgrunden
-setInterval(() => { if (S.cloud && S.v4 && !S.offline && document.visibilityState === 'visible') loadBookings(true).then(updateBell); }, 120000);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.cloud && S.v4 && !S.offline) loadBookings(true).then(updateBell); });
+function syncNotes() {
+  if (!S.cloud || S.offline) return;
+  if (S.v4) loadBookings(true).then(updateBell);
+  if (S.v7) loadEvents(true).then(updateBell);
+}
+setInterval(() => { if (document.visibilityState === 'visible') syncNotes(); }, 120000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNotes(); });
 
 // ---------- tema ----------
 function setTheme(t) {
@@ -2475,6 +2525,467 @@ async function loadRate() {
 }
 
 // ---------- router ----------
+// ---------- färgkällor ----------
+const WUBRG = ['W', 'U', 'B', 'R', 'G'];
+const LAND_COLOR = { Plains: 'W', Island: 'U', Swamp: 'B', Mountain: 'R', Forest: 'G' };
+// färger ett kort kan ge, inom lekens färgidentitet
+function manaColors(info, identity = WUBRG) {
+  const out = new Set(), text = info?.oracle_text || '';
+  for (const m of text.matchAll(/\badd\b[^.\n]*/gi)) {
+    for (const s of m[0].match(/\{[WUBRG]\}/g) || []) out.add(s[1]);
+    if (/any (one )?(color|type)/i.test(m[0])) identity.forEach(c => out.add(c));
+  }
+  if (mainType(info) === 'Land') {
+    const type = info.type_line || '', search = text.match(/search your library for [^.]*/i)?.[0] || '';
+    let hit = false;
+    for (const [w, c] of Object.entries(LAND_COLOR)) {
+      if (type.includes(w)) out.add(c);
+      if (search.includes(w)) { out.add(c); hit = true; }
+    }
+    if (search && !hit && /basic land/i.test(search)) identity.forEach(c => out.add(c));
+  }
+  return [...out].filter(c => identity.includes(c));
+}
+// källor per färg jämfört med hur mycket färgen används
+function colorCheck(deck, pips) {
+  const play = deck.cards.filter(c => c.board === 'main' || c.board === 'commander');
+  const cmd = play.filter(c => c.board === 'commander');
+  const identity = cmd.length ? WUBRG.filter(c => cmd.some(x => S.cards[x.name]?.color_identity?.includes(c))) : WUBRG.filter(c => pips[c]);
+  const rows = identity.map(c => ({ c, pips: pips[c] || 0, lands: 0, other: 0 }));
+  let lands = 0;
+  for (const c of play) {
+    if (c.board === 'commander') continue;
+    const info = S.cards[c.name], isLand = mainType(info) === 'Land';
+    if (isLand) lands += c.qty;
+    else if ((info?.cmc ?? 9) > 3) continue;
+    const colors = manaColors(info, identity);
+    for (const r of rows) if (colors.includes(r.c)) r[isLand ? 'lands' : 'other'] += c.qty;
+  }
+  const total = rows.reduce((a, r) => a + r.pips, 0) || 1;
+  for (const r of rows) {
+    r.want = r.pips ? Math.min(lands, Math.max(Math.round(lands * .3), Math.round(lands * (r.pips / total) * 1.25))) : 0;
+    r.low = r.lands < r.want - 2;
+  }
+  return rows;
+}
+
+// ---------- budget ----------
+// välj de viktigaste saknade korten inom taket: befälhavare, sedan roller under mallen, sedan populära kort och lågt pris
+function budgetPlan(deck, miss, max, priceOf) {
+  const commander = deck.format === 'commander';
+  const need = { Länder: 0, ...Object.fromEntries(ROLE_ORDER.map(k => [k, 0])) };
+  if (commander) {
+    const have = { cards: deck.cards.filter(c => !miss.some(m => m.name === c.name)) };
+    const now = roleCounts(have);
+    for (const [k, t] of Object.entries(ROLE_TARGET)) need[k] = Math.max(0, t[0] - (now[k] || 0));
+  }
+  const incl = {};
+  for (const e of Object.values(S.edhrec)) for (const l of e.lists) for (const c of l.cards) if (c.incl != null) incl[c.name] = Math.max(incl[c.name] || 0, c.incl);
+  const left = miss.flatMap(m => Array(m.missing).fill(m.name)).map(name => ({ name, price: priceOf(name), card: deck.cards.find(c => c.name === name) }));
+  const noPrice = left.filter(x => x.price == null).length;
+  const pool = left.filter(x => x.price != null);
+  const picks = [];
+  let rest = max;
+  const score = x => {
+    if (x.card?.board === 'commander') return 100;
+    const land = mainType(S.cards[x.name]) === 'Land';
+    return (land && need.Länder > 0 ? 3 : 0) + rolesOf(x.card || { name: x.name }).reduce((a, r) => a + (need[r] > 0 ? 3 : 0), 0) + (incl[x.name] || 0) * 3;
+  };
+  while (pool.length) {
+    let best = -1, top = -Infinity;
+    pool.forEach((x, i) => {
+      if (x.price > rest) return;
+      const v = score(x) - x.price / Math.max(1, max) * 2;
+      if (v > top) { top = v; best = i; }
+    });
+    if (best < 0) break;
+    const [x] = pool.splice(best, 1);
+    picks.push(x); rest -= x.price;
+    if (mainType(S.cards[x.name]) === 'Land') need.Länder--;
+    for (const r of rolesOf(x.card || { name: x.name })) need[r]--;
+  }
+  return { picks, cost: max - rest, skipped: pool.length, noPrice };
+}
+
+// ---------- plockguide ----------
+function pickGuide(deck) {
+  const need = {};
+  for (const c of deck.cards) if (c.board !== 'maybe') need[c.name] = (need[c.name] || 0) + c.qty;
+  const out = { bin: [], from: {}, miss: [], basics: 0 };
+  for (const [name, qty] of Object.entries(need).sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (S.basicsOwned && BASICS.has(name)) { out.basics += qty; continue; }
+    const fromBin = Math.min(qty, free(name, deck));
+    if (fromBin) out.bin.push({ name, qty: fromBin });
+    let rest = qty - fromBin, phys = owned(name) - fromBin;
+    if (!deck.built) for (const x of builtIn(name)) {
+      const take = Math.min(rest, x.qty, Math.max(0, phys));
+      if (!take) continue;
+      (out.from[x.id] = out.from[x.id] || { name: x.name, cards: [] }).cards.push({ name, qty: take });
+      rest -= take; phys -= take;
+    }
+    if (rest > 0) out.miss.push({ name, qty: rest });
+  }
+  return out;
+}
+function pickModal(deck) {
+  const key = 'lv-pick-' + deck.id;
+  let done = {};
+  try { done = JSON.parse(localStorage.getItem(key)) || {}; } catch {}
+  const g = pickGuide(deck), from = Object.entries(g.from);
+  const row = (c, src) => { const k = src + '|' + c.name; return `<li><label class="row small"><input type="checkbox" data-pick="${esc(k)}" ${done[k] ? 'checked' : ''}> ${c.qty} × ${esc(c.name)}</label></li>`; };
+  const list = (cards, src) => `<ul class="picks">${cards.map(c => row(c, src)).join('')}</ul>`;
+  openModal(`<div class="row"><h2 style="margin:0">Plockguide: ${esc(deck.name)}</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
+    ${g.bin.length ? `<h3>Ur samlingen (${g.bin.reduce((a, c) => a + c.qty, 0)})</h3>${list(g.bin, 'bin')}` : ''}
+    ${from.map(([id, x]) => `<h3>Ta ur ${esc(x.name)} (${x.cards.reduce((a, c) => a + c.qty, 0)})</h3>${list(x.cards, id)}`).join('')}
+    ${g.basics ? `<p class="small muted">Dessutom ${g.basics} basländer.</p>` : ''}
+    ${g.miss.length ? `<h3>Saknas (${g.miss.reduce((a, c) => a + c.qty, 0)})</h3><p class="small">${g.miss.map(c => `${c.qty} × ${esc(c.name)}`).join(', ')}</p>` : ''}
+    ${from.length ? `<h3>Byt tillbaka efteråt</h3><ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${from.map(([, x]) => `<li><b>${esc(x.name)}</b>: ${x.cards.map(c => esc(c.name)).join(', ')}</li>`).join('')}</ul>
+      <p class="muted small">Du behåller listan här så länge korten är kvar i ${esc(from.map(([, x]) => x.name).join(', '))}.</p>` : ''}
+    <div class="row" style="margin-top:.8rem"><button class="btn small" id="pickClear">Börja om</button><span class="spacer"></span>${S.v6 && !deck.built ? '<button class="btn primary small" id="pickBuilt">Leken är ihopbyggd</button>' : ''}</div>`, box => {
+    box.addEventListener('change', e => {
+      if (!e.target.matches('[data-pick]')) return;
+      done[e.target.dataset.pick] = e.target.checked;
+      try { localStorage.setItem(key, JSON.stringify(done)); } catch {}
+    });
+    $('#pickClear', box).onclick = () => { try { localStorage.removeItem(key); } catch {} pickModal(deck); };
+    if ($('#pickBuilt', box)) $('#pickBuilt', box).onclick = async () => {
+      deck.built = true;
+      try { await api('/api/decks/' + deck.id, { method: 'PUT', body: { built: true } }); toast('Leken är markerad som ihopbyggd'); }
+      catch (err) { deck.built = false; toast('Kunde inte spara: ' + err.message); }
+      closeModal(); render();
+    };
+  });
+}
+
+// ---------- bygg från samlingen ----------
+// en Commander-lek av lediga kort: mallens roller först, bäst EDHREC-värde, sedan länder och basländer. Tomma platser fylls med populära kort du saknar.
+function buildPlan(cmd, edh) {
+  const info = S.cards[cmd], identity = info.color_identity || [];
+  const fits = c => c && c.legalities?.commander === 'legal' && (c.color_identity || []).every(x => identity.includes(x));
+  const score = {};
+  for (const l of edh?.lists || []) for (const c of l.cards) score[c.name] = Math.max(score[c.name] || 0, (c.incl || 0) + Math.max(0, c.synergy || 0));
+  const val = n => score[n] || score[n.split(' // ')[0]] || 0;
+  const cand = Object.keys(S.collection).filter(n => n !== cmd && !BASICS.has(n) && free(n) > 0 && fits(S.cards[n]))
+    .sort((a, b) => val(b) - val(a) || (S.cards[a].cmc || 0) - (S.cards[b].cmc || 0) || a.localeCompare(b));
+  const land = n => mainType(S.cards[n]) === 'Land';
+  const chosen = new Set();
+  for (const [role, t] of Object.entries(ROLE_TARGET)) {
+    if (role === 'Länder') continue;
+    let n = 0;
+    for (const c of cand) {
+      if (n >= t[0]) break;
+      if (land(c) || !rolesOf({ name: c }).includes(role)) continue;
+      if (!chosen.has(c)) chosen.add(c);
+      n++;
+    }
+  }
+  const rest = cand.filter(c => !land(c) && !chosen.has(c));
+  const good = rest.filter(c => val(c) > 0 || rolesOf({ name: c }).length);
+  for (const c of [...good, ...rest.filter(x => !good.includes(x))]) { if (chosen.size >= 62) break; chosen.add(c); }
+  const spells = [...chosen];
+  const lands = cand.filter(c => land(c) && (manaColors(S.cards[c], identity).length || val(c) > 0)).slice(0, 37);
+  // tomma platser bland icke-länder: populära kort som inte är lediga
+  const missing = [];
+  const known = new Set([cmd, ...spells, ...lands]);
+  const pop = [];
+  for (const l of edh?.lists || []) {
+    if (/land/i.test(l.header)) continue;
+    for (const c of l.cards) pop.push(c);
+  }
+  pop.sort((a, b) => (b.incl || 0) - (a.incl || 0));
+  for (const c of pop) {
+    if (spells.length + missing.length >= 62) break;
+    if (!known.has(c.name) && !BASICS.has(c.name)) { known.add(c.name); missing.push(c.name); }
+  }
+  // resten är basländer efter hur mycket färgerna används
+  const pips = Object.fromEntries(WUBRG.map(c => [c, 0]));
+  for (const n of spells) for (const s of (S.cards[n].mana_cost || '').match(/\{[^}]+\}/g) || []) for (const ch of s.slice(1, -1).split('/')) if (pips[ch] !== undefined) pips[ch]++;
+  const free99 = 99 - spells.length - missing.length - lands.length;
+  const nb = Math.max(0, Math.min(free99, 37 - lands.length));
+  const colors = identity.length ? identity : [];
+  const BASIC_OF = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
+  const total = colors.reduce((a, c) => a + pips[c] + 1, 0) || 1;
+  const basics = {};
+  let placed = 0;
+  colors.forEach((c, i) => {
+    const n = i === colors.length - 1 ? nb - placed : Math.round(nb * (pips[c] + 1) / total);
+    if (n > 0) { basics[BASIC_OF[c]] = n; placed += n; }
+  });
+  if (!colors.length && nb) basics.Wastes = nb;
+  return { cmd, spells, lands, missing, basics, nb, gap: Math.max(0, free99 - nb), usedEdh: !!edh };
+}
+function planDeckCards(p) {
+  return [{ name: p.cmd, qty: 1, board: 'commander' },
+    ...[...p.spells, ...p.lands, ...p.missing].map(name => ({ name, qty: 1, board: 'main' })),
+    ...Object.entries(p.basics).map(([name, qty]) => ({ name, qty, board: 'main' }))];
+}
+function viewBuild() {
+  setNav('lekar');
+  const st = viewBuild.st || (viewBuild.st = {});
+  const names = Object.keys(S.collection);
+  if (names.some(n => !S.cards[n] && !S.notFound.has(n)) && !viewBuild.loading) {
+    viewBuild.loading = true;
+    $('#app').innerHTML = '<div class="card empty">Läser in din samling…</div>';
+    ensureCards(names).catch(e => toast(e.message)).finally(() => { viewBuild.loading = false; render(); });
+    return;
+  }
+  const options = names.filter(n => S.cards[n]?.commander_ok && free(n) > 0).sort((a, b) => a.localeCompare(b));
+  const p = st.plan;
+  const counts = p ? roleCounts({ cards: planDeckCards(p) }) : null;
+  const missVal = p ? p.missing.reduce((a, n) => a + (S.cards[n]?.eur || 0), 0) : 0;
+  $('#app').innerHTML = `<div class="row"><a href="#/" class="icon-btn" aria-label="Tillbaka">←</a><h1>Bygg från samlingen</h1></div>
+    <div class="grid cols-2" style="margin-top:1rem">
+      <div class="card"><h2>Välj befälhavare</h2>
+        <div class="add-bar" id="bdCmd"></div>
+        ${options.length ? `<p class="small muted" style="margin-bottom:.3rem">Befälhavare du har lediga:</p><div class="row small">${options.slice(0, 60).map(n => `<button class="btn small ${st.cmd === n ? 'primary' : ''}" data-bcmd="${esc(n)}">${esc(n)}</button>`).join('')}</div>` : ''}
+        <p class="muted small">Kort i ihopbyggda lekar räknas inte som lediga. Bara Commander just nu.</p>
+        ${st.busy ? '<p class="muted">Bygger…</p>' : ''}
+      </div>
+      <div class="card"><h2>Förslag</h2>${p ? `
+        <p><b>${esc(p.cmd)}</b>: ${p.spells.length + p.lands.length + 1} kort från din samling, ${p.nb} basländer och ${p.missing.length} att skaffa${p.missing.length ? ` (ca ${krE(missVal)})` : ''}.</p>
+        ${p.gap ? `<p class="warn small">${p.gap} platser är tomma. Du väljer själv vad som ska in där.</p>` : ''}
+        ${p.usedEdh ? '' : '<p class="warn small">EDHREC har ingen sida för den här befälhavaren, så valet bygger bara på rollerna.</p>'}
+        <table class="small"><tbody>${Object.entries(ROLE_TARGET).map(([k, t]) => `<tr><td>${k}</td><td class="num ${counts[k] < t[0] ? 'warn' : 'good'}"><b>${counts[k]}</b></td><td class="muted">mål ${t[0]}–${t[1]}</td></tr>`).join('')}</tbody></table>
+        <div class="row" style="margin-top:.6rem"><input type="text" id="bdName" maxlength="80" style="flex:1" value="${esc(p.cmd)}"><button class="btn primary" id="bdMake">Skapa leken</button></div>
+        <details class="small"><summary>Visa korten</summary>
+          <p><b>Från samlingen:</b> ${[...p.spells, ...p.lands].map(esc).join(', ') || '–'}</p>
+          ${p.missing.length ? `<p><b>Att skaffa:</b> ${p.missing.map(esc).join(', ')}</p>` : ''}
+          <p><b>Basländer:</b> ${Object.entries(p.basics).map(([n, q]) => `${q} ${esc(n)}`).join(', ') || '–'}</p></details>` : '<p class="muted">Välj en befälhavare så föreslår jag en lek av kort du har lediga.</p>'}</div>
+    </div>`;
+  const choose = async name => {
+    st.cmd = name; st.busy = true; st.plan = null; render();
+    try {
+      await ensureCards([name]);
+      if (!S.cards[name]) throw new Error('Hittar inte kortet');
+      const edh = await edhrecFor([name]).catch(() => null);
+      const pop = (edh?.lists || []).flatMap(l => l.cards.map(c => c.name));
+      await ensureCards(pop.filter(n => !BASICS.has(n))).catch(() => {});
+      st.plan = buildPlan(name, edh);
+    } catch (e) { toast(e.message, 4000); }
+    st.busy = false; render();
+  };
+  addCardUI($('#bdCmd'), choose, 'Sök befälhavare…');
+  $$('[data-bcmd]').forEach(b => b.onclick = () => choose(b.dataset.bcmd));
+  if ($('#bdMake')) $('#bdMake').onclick = async () => {
+    $('#bdMake').disabled = true;
+    try {
+      const d = await api('/api/decks', { method: 'POST', body: { name: $('#bdName').value.trim() || p.cmd, format: 'commander' } });
+      d.cards = planDeckCards(p);
+      await api('/api/decks/' + d.id, { method: 'PUT', body: d });
+      S.decks.unshift(d); viewBuild.st = null;
+      location.hash = '#/lek/' + d.id;
+    } catch (e) { $('#bdMake').disabled = false; toast('Kunde inte skapa: ' + e.message, 4000); }
+  };
+}
+
+// ---------- samlingens värde över tid ----------
+const todayStr = () => new Date().toISOString().slice(0, 10);
+async function valueSnapshot() {
+  if (!S.v7 || S.offline || valueSnapshot.busy || valueSnapshot.done === todayStr()) return;
+  valueSnapshot.busy = true;
+  try {
+    if (!S.valueLog) { S.valueLog = await api('/api/value-log'); if (location.hash.startsWith('#/samling')) render(); }
+    const names = Object.keys(S.collection);
+    if (names.length && !S.valueLog.some(x => x.day === todayStr())) {
+      await ensureCards(names, true); // färska priser en gång per dygn
+      const eurOf = Object.fromEntries(names.filter(n => S.cards[n]?.eur != null).map(n => [n, S.cards[n].eur]));
+      const prices = Object.fromEntries(Object.entries(eurOf).filter(([, v]) => v >= .5).sort((a, b) => b[1] - a[1]).slice(0, 300));
+      const row = await api('/api/value-log', { method: 'PUT', body: { value_eur: names.reduce((a, n) => a + colValue(n), 0), cards: names.reduce((a, n) => a + S.collection[n], 0), prices } });
+      S.valueLog.unshift(row);
+      if (location.hash.startsWith('#/samling')) render();
+    }
+    valueSnapshot.done = todayStr();
+  } catch { valueSnapshot.done = todayStr(); } finally { valueSnapshot.busy = false; }
+}
+function lineChart(pts, title) {
+  const W = 420, H = 170, pad = 8, base = H - 20;
+  const vals = pts.map(p => p.v), lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const X = i => pad + (W - pad * 2) * (pts.length > 1 ? i / (pts.length - 1) : .5), Y = v => 22 + (base - 30) * (1 - (v - lo) / span);
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
+  const step = (W - pad * 2) / Math.max(1, pts.length - 1), last = pts[pts.length - 1];
+  return `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img"><line class="axis" x1="0" x2="${W}" y1="${base}" y2="${base}"></line>
+    <path class="line" d="${line}"></path><circle class="dot" cx="${X(pts.length - 1)}" cy="${Y(last.v)}" r="4"></circle>
+    ${pts.map((p, i) => `<g data-tip="${esc(title(p))}"><rect class="hit" x="${X(i) - step / 2}" y="0" width="${step}" height="${base}"></rect></g>`).join('')}
+    <text x="0" y="${H - 5}">${esc(pts[0].day)}</text><text x="${W}" y="${H - 5}" text-anchor="end">${esc(last.day)}</text></svg><div class="tip" hidden></div></div>`;
+}
+// störst prisändring per kort mellan senaste mätningen och den som ligger närmast 30 dagar bakåt
+function priceMoves(log) {
+  if (!log || log.length < 2) return [];
+  const now = log[0], cut = Date.parse(now.day) - 30 * 864e5;
+  const then = log.find(x => Date.parse(x.day) <= cut) || log[log.length - 1];
+  return Object.keys(now.prices || {}).filter(n => then.prices?.[n] != null && then.prices[n] !== now.prices[n])
+    .map(n => ({ name: n, from: then.prices[n], to: now.prices[n], diff: now.prices[n] - then.prices[n], since: then.day }));
+}
+function valueCard() {
+  if (!S.v7) return '';
+  const log = S.valueLog;
+  if (!log) return '<div class="card"><h2>Värdeutveckling</h2><p class="muted small">Hämtar…</p></div>';
+  if (log.length < 2) return '<div class="card"><h2>Värdeutveckling</h2><p class="muted small">Värdet sparas en gång per dygn när du öppnar samlingen. Kurvan visas när det finns två mätningar.</p></div>';
+  const asc = log.slice(0, 365).reverse(), pts = asc.map(x => ({ day: x.day, v: x.value_eur, cards: x.cards }));
+  const diff = pts[pts.length - 1].v - pts[0].v, moves = priceMoves(log);
+  const up = moves.filter(m => m.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 5), down = moves.filter(m => m.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 5);
+  const row = m => `<tr><td>${esc(m.name)}</td><td class="num ${m.diff > 0 ? 'good' : 'warn'}">${m.diff > 0 ? '+' : '−'}${krE(Math.abs(m.diff))}</td></tr>`;
+  return `<div class="card"><h2>Värdeutveckling</h2>
+    <p class="small"><b>${diff >= 0 ? '+' : '−'}${krE(Math.abs(diff))}</b> sedan ${esc(pts[0].day)}</p>
+    ${lineChart(pts, p => `${p.day}: ${krE(p.v)}, ${p.cards} kort`)}
+    <p class="muted small">Kurvan stiger också när du lägger till kort.</p>
+    ${up.length ? `<h3>Mest upp sedan ${esc(up[0].since)}</h3><table class="small"><tbody>${up.map(row).join('')}</tbody></table>` : ''}
+    ${down.length ? `<h3>Mest ner sedan ${esc(down[0].since)}</h3><table class="small"><tbody>${down.map(row).join('')}</tbody></table>` : ''}
+    <details class="small"><summary>Visa som tabell</summary><table><tbody>${asc.slice().reverse().slice(0, 60).map(x => `<tr><td>${esc(x.day)}</td><td class="num">${krE(x.value_eur)}</td><td class="num muted">${x.cards} kort</td></tr>`).join('')}</tbody></table></details></div>`;
+}
+
+// ---------- topplista ----------
+function leaderboard(rows) {
+  const people = {}, decks = {};
+  const add = (o, g) => { o.n++; if (g.result === 'win') o.win++; };
+  for (const g of rows) {
+    const p = people[g.player] = people[g.player] || { name: g.player, n: 0, win: 0, decks: {} };
+    add(p, g);
+    add(p.decks[g.deck_name] = p.decks[g.deck_name] || { name: g.deck_name, n: 0, win: 0 }, g);
+    add(decks[g.player + '|' + g.deck_name] = decks[g.player + '|' + g.deck_name] || { player: g.player, name: g.deck_name, n: 0, win: 0 }, g);
+  }
+  const pct = x => x.n ? x.win / x.n : 0;
+  const list = Object.values(people).map(p => ({ ...p, pct: pct(p), best: Object.values(p.decks).sort((a, b) => b.win - a.win || pct(b) - pct(a))[0] })).sort((a, b) => b.win - a.win || b.pct - a.pct);
+  // vem mot vem: matcher där motståndarens namn står i Mot-fältet
+  const names = list.map(p => p.name), vs = [];
+  const has = (text, name) => (text || '').toLowerCase().split(/[,;&]| och | mot /).some(t => t.trim() === name.toLowerCase() || t.trim().startsWith(name.toLowerCase() + ' '));
+  for (const a of names) for (const b of names) {
+    if (a >= b) continue;
+    const r = { a, b, n: 0, wa: 0, wb: 0 };
+    for (const g of rows) {
+      if (g.player === a && has(g.opponents, b)) { r.n++; if (g.result === 'win') r.wa++; }
+      if (g.player === b && has(g.opponents, a) && g.result === 'win') r.wb++;
+    }
+    if (r.n) vs.push(r);
+  }
+  return { list, decks: Object.values(decks).map(d => ({ ...d, pct: pct(d) })).sort((a, b) => b.pct - a.pct || b.n - a.n), vs };
+}
+function tabLeader(el) {
+  const shareBox = `<label class="small row"><input type="checkbox" id="shareGames" ${S.profile.share ? 'checked' : ''}> Visa mina matcher i topplistan</label>
+    <p class="muted small">Andra ser resultat, lek, datum och vilka du mötte, men inte dina anteckningar. ${S.profile.name ? '' : 'Sätt ditt namn under <a href="#/installningar">Inställningar</a> först.'}</p>`;
+  const draw = rows => {
+    const t = leaderboard(rows);
+    el.innerHTML = `<div class="grid cols-2"><div class="grid" style="align-content:start">
+      <div class="card"><h2>Topplista</h2>${t.list.length ? `<div class="table-scroll"><table><thead><tr><th>#</th><th>Spelare</th><th class="num">Vinster</th><th class="num">Matcher</th><th class="num">Andel</th><th>Bästa lek</th></tr></thead><tbody>
+        ${t.list.map((p, i) => `<tr><td>${i + 1}</td><td><b>${esc(p.name)}</b></td><td class="num">${p.win}</td><td class="num">${p.n}</td><td class="num">${Math.round(p.pct * 100)} %</td><td class="small">${esc(p.best?.name || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Ingen delar sina matcher än.</p>'}
+        ${shareBox}</div>
+      ${t.vs.length ? `<div class="card"><h2>Vem mot vem</h2><table class="small"><tbody>${t.vs.map(v => `<tr><td>${esc(v.a)}</td><td class="num"><b>${v.wa}–${v.wb}</b></td><td>${esc(v.b)}</td></tr>`).join('')}</tbody></table>
+        <p class="muted small">Räknas när namnet står i Mot-fältet, som i delade matcher.</p></div>` : ''}</div>
+      <div class="card" style="align-self:start"><h2>Bästa lekar</h2>${t.decks.length ? `<div class="table-scroll"><table><thead><tr><th>Lek</th><th>Spelare</th><th class="num">V/M</th><th class="num">Andel</th></tr></thead><tbody>
+        ${t.decks.slice(0, 15).map(d => `<tr><td>${esc(d.name)}</td><td class="small">${esc(d.player)}</td><td class="num">${d.win}/${d.n}</td><td class="num">${Math.round(d.pct * 100)} %</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Inga matcher än.</p>'}</div></div>`;
+    $('#shareGames').onchange = async e => {
+      if (!S.profile.name) { e.target.checked = false; return toast('Sätt ditt namn under Inställningar först', 3500); }
+      try { await api('/api/profile', { method: 'PUT', body: { name: S.profile.name, share: e.target.checked } }); S.profile.share = e.target.checked; render(); }
+      catch (err) { e.target.checked = !e.target.checked; toast('Kunde inte spara: ' + err.message, 4000); }
+    };
+  };
+  el.innerHTML = '<p class="muted">Hämtar…</p>';
+  api('/api/leaderboard').then(rows => { if (el.isConnected) draw(rows); }).catch(e => { if (el.isConnected) el.innerHTML = `<div class="card empty">Kunde inte hämta: ${esc(e.message)}</div>`; });
+}
+
+// ---------- spelkväll ----------
+const evDate = o => new Date(o).toLocaleString('sv-SE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+async function loadEvents(force) {
+  if (!S.cloud || !S.v7) { S.events = []; return; }
+  if (S.events && !force) return;
+  S.events = await api('/api/events').catch(() => S.events || []);
+}
+const eventsSeenAt = () => { try { return +localStorage.getItem('lv-event-seen') || 0; } catch { return 0; } };
+function markEventsSeen() {
+  const t = Math.max(Date.now(), ...(S.events || []).map(e => Date.parse(e.updated) || 0));
+  try { localStorage.setItem('lv-event-seen', String(t)); } catch {}
+}
+const eventActive = e => [...e.options, e.chosen].filter(Boolean).some(o => Date.parse(o) > Date.now() - 864e5);
+// bord med 3–4 spelare (5 om det bara är fem), lekar med närmast samma bracket tillsammans
+function podsOf(list) {
+  const n = list.length;
+  const threes = n <= 5 ? 0 : (4 - n % 4) % 4;
+  const sizes = n <= 5 ? (n ? [n] : []) : [...Array((n - 3 * threes) / 4).fill(4), ...Array(threes).fill(3)];
+  const sorted = list.slice().sort((a, b) => (a.bracket ?? 2.5) - (b.bracket ?? 2.5) || a.name.localeCompare(b.name));
+  return sizes.map(k => sorted.splice(0, k));
+}
+function eventHtml(e) {
+  const mine = e.replies.find(r => r.mine), goers = o => e.replies.filter(r => r.dates.includes(o));
+  const replies = e.chosen ? goers(e.chosen) : e.replies.filter(r => r.dates.length);
+  return `<div class="card" data-ev="${esc(e.id)}"><div class="row"><h2 style="margin:0">${esc(e.title)}</h2><span class="spacer"></span>${e.mine ? '<button class="icon-btn" data-evdel title="Ta bort">✕</button>' : ''}</div>
+    <p class="muted small">${esc(e.ownerName)} bjuder in${e.place ? ` · ${esc(e.place)}` : ''}</p>
+    ${e.note ? `<p class="small">${esc(e.note)}</p>` : ''}
+    ${e.chosen ? `<p><span class="pill good">Bestämt</span> <b>${esc(evDate(e.chosen))}</b></p>` : ''}
+    <table class="small"><tbody>${e.options.map(o => `<tr><td style="width:1.6rem"><input type="checkbox" data-evdate="${esc(o)}" aria-label="Jag kan ${esc(evDate(o))}" ${mine?.dates.includes(o) ? 'checked' : ''}></td>
+      <td><b>${esc(evDate(o))}</b><div class="muted">${goers(o).map(r => esc(r.name)).join(', ') || 'Ingen än'}</div></td>
+      <td class="num">${goers(o).length}</td>${e.mine ? `<td class="num"><button class="btn small" data-evpick="${esc(o)}">${e.chosen === o ? 'Valt' : 'Välj'}</button></td>` : ''}</tr>`).join('')}</tbody></table>
+    <p><label class="small">Min lek<br><select data-evdeck style="width:100%"><option value="">Vet inte än</option>${S.decks.map(d => `<option value="${d.id}" ${mine?.deck_name === d.name ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label></p>
+    ${replies.some(r => r.deck_name) ? `<p class="small muted">${replies.filter(r => r.deck_name).map(r => `${esc(r.name)}: ${esc(r.deck_name)}${r.bracket ? ` (bracket ${r.bracket})` : ''}`).join(' · ')}</p>` : ''}
+    ${e.mine && e.chosen ? `<button class="btn small" data-evpods>${e.pods.length ? 'Dela in borden igen' : 'Dela in bord'}</button>` : ''}
+    ${e.pods.length ? `<h3>Bord</h3><div class="grid cols-2">${e.pods.map((p, i) => `<div><b>Bord ${i + 1}</b><ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${p.map(x => `<li>${esc(x.name)}${x.deck ? ` – ${esc(x.deck)}` : ''}${x.bracket ? ` (${x.bracket})` : ''}</li>`).join('')}</ul></div>`).join('')}</div>` : ''}</div>`;
+}
+function tabEvents(el) {
+  if (!S.events) { el.innerHTML = '<p class="muted">Hämtar…</p>'; loadEvents(true).then(() => el.isConnected && render()); return; }
+  markEventsSeen(); updateBell();
+  const list = S.events.filter(eventActive);
+  el.innerHTML = `<div class="grid cols-2"><div class="grid" style="align-content:start">${list.map(eventHtml).join('') || '<div class="card empty">Inga spelkvällar planerade.</div>'}</div>
+    <div class="card" style="align-self:start"><h2>Ny spelkväll</h2>
+      <p><input type="text" id="evTitle" maxlength="80" placeholder="T.ex. Commander hos Jonte" style="width:100%"></p>
+      <p><input type="text" id="evPlace" maxlength="120" placeholder="Plats (valfritt)" style="width:100%"></p>
+      <p class="small muted" style="margin-bottom:.2rem">Föreslå upp till tre tider:</p>
+      ${[0, 1, 2].map(() => '<p style="margin:.2rem 0"><input type="datetime-local" data-evopt style="width:100%"></p>').join('')}
+      <p><input type="text" id="evNote" maxlength="500" placeholder="Meddelande (valfritt)" style="width:100%"></p>
+      <p class="row"><span class="spacer"></span><button class="btn primary" id="evNew">Bjud in</button></p>
+      <p class="muted small">Alla inloggade ser spelkvällen. Klockan visar den för dem.</p></div></div>`;
+  const reload = async () => { await loadEvents(true); render(); };
+  const reply = async (e, patch) => {
+    const mine = e.replies.find(r => r.mine);
+    try {
+      await api(`/api/events/${e.id}/reply`, { method: 'PUT', body: { dates: mine?.dates || [], deck_name: mine?.deck_name || '', bracket: mine?.bracket ?? null, ...patch } });
+    } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
+    reload();
+  };
+  const evOf = t => S.events.find(x => x.id === t.closest('[data-ev]')?.dataset.ev);
+  el.addEventListener('change', async ev => {
+    const e = evOf(ev.target); if (!e) return;
+    if (ev.target.matches('[data-evdate]')) {
+      const mine = e.replies.find(r => r.mine), o = ev.target.dataset.evdate;
+      const dates = (mine?.dates || []).filter(x => x !== o);
+      if (ev.target.checked) dates.push(o);
+      reply(e, { dates });
+    }
+    if (ev.target.matches('[data-evdeck]')) {
+      const d = S.decks.find(x => x.id === ev.target.value);
+      if (!d) return reply(e, { deck_name: '', bracket: null });
+      await ensureCards(d.cards.map(c => c.name)).catch(() => {});
+      reply(e, { deck_name: d.name, bracket: d.format === 'commander' ? bracketInfo(d).b : null });
+    }
+  });
+  el.addEventListener('click', async ev => {
+    const t = ev.target;
+    if (t.id === 'evNew') {
+      const title = $('#evTitle').value.trim(), options = $$('[data-evopt]').map(i => i.value).filter(Boolean);
+      if (!title) return toast('Skriv en rubrik');
+      if (!options.length) return toast('Föreslå minst en tid');
+      if (!S.profile.name) return toast('Sätt ditt namn under Inställningar först', 3500);
+      try { await api('/api/events', { method: 'POST', body: { title, place: $('#evPlace').value.trim(), note: $('#evNote').value.trim(), options: [...new Set(options)] } }); toast('Spelkvällen är skapad'); reload(); }
+      catch (err) { toast('Kunde inte skapa: ' + err.message, 4000); }
+      return;
+    }
+    const e = evOf(t); if (!e) return;
+    const put = async body => { try { await api('/api/events/' + e.id, { method: 'PUT', body }); } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); } reload(); };
+    if (t.closest('[data-evdel]')) { if (confirm('Ta bort spelkvällen?')) { await api('/api/events/' + e.id, { method: 'DELETE' }).catch(err => toast(err.message)); reload(); } return; }
+    const p = t.closest('[data-evpick]');
+    if (p) return put({ chosen: e.chosen === p.dataset.evpick ? '' : p.dataset.evpick, pods: [] });
+    if (t.closest('[data-evpods]')) {
+      const list = e.replies.filter(r => r.dates.includes(e.chosen));
+      if (!list.length) return toast('Ingen har svarat ja på den tiden');
+      put({ pods: podsOf(list).map(p => p.map(r => ({ name: r.name, deck: r.deck_name, bracket: r.bracket }))) });
+    }
+  });
+}
+function viewGroup(sub) {
+  setNav('matcher');
+  $('#app').innerHTML = `<div class="row"><h1>Matcher</h1></div>${gameTabs(sub)}<div id="grp"></div>`;
+  (sub === 'topplista' ? tabLeader : tabEvents)($('#grp'));
+}
+const gameTabs = sub => S.cloud && S.v7 ? `<div class="tabs">${[['', 'Mina matcher'], ['topplista', 'Topplista'], ['spelkvall', 'Spelkväll']].map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/matcher${k ? '/' + k : ''}">${l}</a>`).join('')}</div>` : '';
+
 function render() {
   const h = location.hash.slice(1) || '/';
   const scroll = scrollY;
@@ -2485,7 +2996,8 @@ function render() {
   else if ((m = h.match(/^\/lek\/([\w-]+)/))) { if (render.deck !== m[1]) { render.deck = m[1]; S.tab = 'lista'; tabBuy.sel = null; } viewDeck(m[1]); }
   else if ((m = h.match(/^\/publik\/([\w-]+)/))) viewPublicDeck(m[1]);
   else if (h.startsWith('/utforska')) viewExplore(h.split('/')[2]);
-  else if (h.startsWith('/matcher')) viewGames();
+  else if (h.startsWith('/matcher')) viewGames(h.split('/')[2]);
+  else if (h.startsWith('/bygg')) viewBuild();
   else if (h.startsWith('/regler')) viewRules(h.split('/')[2]);
   else if (h.startsWith('/samling')) viewCollection();
   else if (h.startsWith('/installningar')) viewSettings();
@@ -2514,6 +3026,7 @@ addEventListener('hashchange', () => { $('#preview').hidden = true; render(); })
   if (!S.cloud) $$('[data-nav=utforska]').forEach(a => a.remove());
   if (S.cloud && lifeState()?.room) roomJoin(lifeState().room);
   if (S.cloud && S.v4 && !S.offline) loadBookings().then(() => location.hash.startsWith('#/utforska') && render());
+  if (S.cloud && S.v7 && !S.offline) loadEvents().then(updateBell);
   if (!S.v3) $$('[data-nav=onskelista]').forEach(a => a.remove());
   updateWishBadge();
   const names = new Set([...S.decks.flatMap(d => d.cards.map(c => c.name)), ...Object.keys(S.collection), ...S.wishlist.map(w => w.name)]);

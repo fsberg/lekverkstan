@@ -30,6 +30,7 @@ let games = load('games.json', []);
 let trade = load('trade.json', {}); // lokalt: bara egen markering, ingen bytesbörs
 let wishlist = load('wishlist.json', []);
 let loans = load('loans.json', []);
+let valueLog = load('valuelog.json', []); // nyast först: [{ day, value_eur, cards, prices }]
 let colmeta = load('colmeta.json', {}); // { "Sol Ring": { added: 1730000000000, prints: [...] } }
 let settings = load('settings.json', { svenskaMagicUrl: 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1' });
 const cardCache = load('cardcache.json', {});   // lowercased name -> kortinfo
@@ -98,9 +99,9 @@ function remember(s) {
   if (s.name.includes(' // ')) cardCache[s.name.split(' // ')[0].toLowerCase()] = s;
 }
 // v3: billigaste utgåvan (prefer:eur-low), så att dyra specialutgåvor inte blåser upp värdet
-async function lookupCards(names) {
+async function lookupCards(names, fresh) {
   const want = [...new Set(names.map(n => n.trim()).filter(Boolean))];
-  const missing = want.filter(n => cardCache[n.toLowerCase()]?.v !== 3);
+  const missing = want.filter(n => fresh || cardCache[n.toLowerCase()]?.v !== 3);
   const notFound = [];
   let rest = [];
   for (let i = 0; i < missing.length; i += 25) {
@@ -301,7 +302,7 @@ function readBody(req) {
 
 async function api(req, res, url) {
   const p = url.pathname, m = req.method;
-  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, wishlist, loans, colmeta, v3: true, v4: true, v6: true, profile: { name: '' }, cloud: false, settings });
+  if (p === '/api/state' && m === 'GET') return send(res, 200, { decks, collection, trade, games, wishlist, loans, colmeta, v3: true, v4: true, v6: true, v7: true, profile: { name: '' }, cloud: false, settings });
   if (p === '/api/wishlist' && m === 'PUT') {
     const b = await readBody(req);
     const name = String(b.name || '').slice(0, 150);
@@ -329,6 +330,15 @@ async function api(req, res, url) {
   if (p === '/api/archidekt' && m === 'GET') return send(res, 200, await archidekt(url.searchParams.get('id') || ''));
   if (p === '/api/public-decks' || p === '/api/trades' || p === '/api/bookings') return send(res, 200, []);
   if (p === '/api/profile' && m === 'PUT') return send(res, 200, { name: '' });
+  if (p === '/api/leaderboard' || p === '/api/events') return send(res, 200, []);
+  if (p === '/api/value-log' && m === 'GET') return send(res, 200, valueLog);
+  if (p === '/api/value-log' && m === 'PUT') {
+    const b = await readBody(req);
+    const row = { day: new Date().toISOString().slice(0, 10), value_eur: Math.max(0, +b.value_eur || 0), cards: Math.max(0, b.cards | 0), prices: b.prices || {} };
+    valueLog = [row, ...valueLog.filter(x => x.day !== row.day)].slice(0, 400);
+    save('valuelog.json', valueLog);
+    return send(res, 200, row);
+  }
   if (p === '/api/trade' && m === 'PUT') {
     const b = await readBody(req);
     for (const [name, n] of Object.entries(b || {})) { const v = Math.max(0, Math.min(collection[name] || 0, n | 0)); if (v) trade[name] = v; else delete trade[name]; }
@@ -403,7 +413,7 @@ async function api(req, res, url) {
 
   if (p === '/api/cards' && m === 'POST') {
     const b = await readBody(req);
-    return send(res, 200, await lookupCards(Array.isArray(b.names) ? b.names.slice(0, 400) : []));
+    return send(res, 200, await lookupCards(Array.isArray(b.names) ? b.names.slice(0, 400) : [], !!b.fresh));
   }
   if (p === '/api/search' && m === 'GET') return send(res, 200, await searchCards(url.searchParams.get('q') || '', +url.searchParams.get('max') || 60));
   if (p === '/api/autocomplete' && m === 'GET') return send(res, 200, await autocomplete(url.searchParams.get('q') || ''));
