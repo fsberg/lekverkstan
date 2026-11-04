@@ -2232,17 +2232,44 @@ function lifeRoll() {
   if (s.room) roomSend({ t: 'dice', res, by });
   lifeDice(res);
 }
+// tärningen rullar i varje spelares ruta (vänd mot spelaren), sedan lyser vinnaren
 function lifeDice(res, by = '') {
   const s = lifeState();
-  if (!location.hash.startsWith('#/liv') || !s.players[res.win]) return;
-  s.starter = res.win; saveLife(); lifeRedraw();
-  const order = s.players.map((p, i) => i).sort((x, y) => (x === res.win ? -1 : y === res.win ? 1 : res.rolls[y][0] - res.rolls[x][0]));
-  openModal(`<div class="row"><h2 style="margin:0">🎲 ${esc(s.players[res.win].name)} börjar!</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
-    <p class="muted small">${by ? esc(by) + ' slog. ' : ''}Alla slår en d20 och högst börjar. Blir det lika slår de som delar högsta om.</p>
-    <div class="dice">${order.map(i => `<div class="row ${i === res.win ? 'win' : ''}"><span>${esc(s.players[i].name)}</span><span class="spacer"></span><b>${res.rolls[i].join(' → ')}</b></div>`).join('')}</div>
-    <div class="row" style="margin-top:.8rem"><span class="spacer"></span><button class="btn small" id="lReroll">Slå om</button><button class="btn small primary" data-close>Kör!</button></div>`, box => {
-    $('#lReroll', box).onclick = () => lifeRoll();
+  if (!s?.players?.[res.win]) return;
+  const run = lifeDice.run = (lifeDice.run || 0) + 1;
+  $$('.die').forEach(e => e.remove());
+  if (!location.hash.startsWith('#/liv') || !$('.life')) return lifeDiceDone(res, by);
+  s.starter = undefined; saveLife(); lifeRedraw();
+  const rounds = Math.max(...res.rolls.map(r => r.length));
+  const dice = s.players.map((_, i) => {
+    const el = document.createElement('div'); el.className = 'die'; el.innerHTML = '<span></span>';
+    $(`.pl[data-p="${i}"]`)?.append(el); return el;
   });
+  const step = round => {
+    if (run !== lifeDice.run) return;
+    if (round === rounds) return finish();
+    const rolling = res.rolls.map((r, i) => (r.length > round ? i : -1)).filter(i => i >= 0);
+    if (round) toast('Lika! De som delar högsta slår om', 1500);
+    dice.forEach((el, i) => el.classList.toggle('dim', !rolling.includes(i)));
+    rolling.forEach(i => { dice[i].classList.remove('done'); dice[i].classList.add('rolling'); });
+    const spin = setInterval(() => rolling.forEach(i => (dice[i].firstChild.textContent = d20())), 70);
+    setTimeout(() => {
+      clearInterval(spin); if (run !== lifeDice.run) return;
+      rolling.forEach(i => { dice[i].classList.replace('rolling', 'done'); dice[i].firstChild.textContent = res.rolls[i][round]; });
+      setTimeout(() => step(round + 1), round + 1 < rounds ? 1200 : 400);
+    }, 1200);
+  };
+  const finish = () => {
+    dice.forEach((el, i) => { el.classList.toggle('win', i === res.win); el.classList.toggle('dim', i !== res.win); });
+    lifeDiceDone(res, by);
+    setTimeout(() => { if (run === lifeDice.run) dice.forEach(e => e.remove()); }, 3000);
+  };
+  step(0);
+}
+function lifeDiceDone(res, by) {
+  const s = lifeState();
+  s.starter = res.win; saveLife(); lifeRedraw();
+  if (location.hash.startsWith('#/liv')) toast(`🎲 ${by ? by + ' slog – ' : ''}${s.players[res.win].name} börjar!`, 3500);
 }
 function lifeMore(i) {
   const s = lifeState(), p = s.players[i];

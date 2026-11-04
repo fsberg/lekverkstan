@@ -298,5 +298,15 @@ body.life-on main { max-width: none; padding: 0; }
 .next { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; padding: .5rem .8rem; margin-bottom: .8rem; background: var(--surface-2); border-radius: 8px; }
 .next .btn { margin-left: .3rem; }
 .shared[title], .lent[title] { cursor: help; }
-.dice .row { padding: .35rem .6rem; border-radius: 6px; }
-.dice .win { background: color-mix(in srgb, var(--accent) 25%, transparent); font-weight: 600; }
+/* tärning i livräknaren: en d20-siluett som snurrar och landar */
+.die { position: absolute; left: 50%; top: 50%; width: min(42%, 34vmin, 9rem); aspect-ratio: 1; margin: 0; transform: translate(-50%, -50%); z-index: 3; pointer-events: none; display: grid; place-items: center;
+  background: radial-gradient(circle at 35% 30%, #fff, #e8e2d0 55%, #b9ae8f); color: #222; clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%); filter: drop-shadow(0 6px 10px rgba(0,0,0,.5)); transition: opacity .3s, filter .3s; }
+.die span { font-size: clamp(1.6rem, 9vmin, 3.6rem); font-weight: 800; font-variant-numeric: tabular-nums; }
+.die.rolling { animation: dieroll .45s linear infinite; }
+.die.done { animation: dieland .35s ease-out; }
+.die.dim { opacity: .45; }
+.die.win { background: radial-gradient(circle at 35% 30%, #fff8d6, #ffd54a 55%, #c99400); animation: diewin .8s ease-in-out infinite alternate; }
+@keyframes dieroll { 0% { transform: translate(-50%, -50%) rotate(0) scale(1); } 25% { transform: translate(-30%, -65%) rotate(100deg) scale(.9); } 50% { transform: translate(-50%, -40%) rotate(190deg) scale(1.05); } 75% { transform: translate(-70%, -60%) rotate(280deg) scale(.92); } 100% { transform: translate(-50%, -50%) rotate(360deg) scale(1); } }
+@keyframes dieland { 0% { transform: translate(-50%, -50%) scale(1.25); } 100% { transform: translate(-50%, -50%) scale(1); } }
+@keyframes diewin { from { transform: translate(-50%, -50%) scale(1); } to { transform: translate(-50%, -50%) scale(1.15); } }
+@media (prefers-reduced-motion: reduce) { .die.rolling, .die.done, .die.win { animation: none; } }
