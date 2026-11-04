@@ -298,3 +298,5 @@ body.life-on main { max-width: none; padding: 0; }
 .next { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; padding: .5rem .8rem; margin-bottom: .8rem; background: var(--surface-2); border-radius: 8px; }
 .next .btn { margin-left: .3rem; }
 .shared[title], .lent[title] { cursor: help; }
+.dice .row { padding: .35rem .6rem; border-radius: 6px; }
+.dice .win { background: color-mix(in srgb, var(--accent) 25%, transparent); font-weight: 600; }

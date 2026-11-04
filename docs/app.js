@@ -1991,7 +1991,7 @@ async function wakeLock(on) {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && location.hash.startsWith('#/liv') && lifeState()?.players) wakeLock(true); });
 const isOut = (p, s) => p.life <= 0 || p.poison >= 10 || s.players.some((_, j) => (p.cmd[j] || 0) >= 21);
 const roomCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 32]).join('');
-const shared = ['setup', 'start', 'players', 'seats'];
+const shared = ['setup', 'start', 'players', 'seats', 'starter'];
 
 // ---- delad räknare ----
 const room = { ch: null, code: '', peers: new Map() }; // peers: annan flik -> senast hörd
@@ -2026,7 +2026,7 @@ function cleanShared(st) {
   }));
   const setup = { n, life: num(st.setup?.life, 1, 999, 40), names: players.map(p => p.name), deck: '', share: true };
   const seats = Object.fromEntries(Object.entries(st.seats || {}).filter(([j]) => /^\d$/.test(j) && +j < n).map(([j, v]) => [j, String(v).slice(0, 20)]));
-  return { setup, start: num(st.start, 0, 9e15, Date.now()), players, seats };
+  return { setup, start: num(st.start, 0, 9e15, Date.now()), players, seats, starter: st.starter == null ? undefined : num(st.starter, 0, n - 1) };
 }
 function applyOp(s, op) {
   if (!op || typeof op.id !== 'string' || !['life', 'poison', 'cmd'].includes(op.k)) return false;
@@ -2067,6 +2067,13 @@ function roomMsg(m) {
   }
   if (!s.players || s.room !== room.code) return;
   if (m.t === 'op') { if (applyOp(s, m.op)) { saveLife(); lifeRedraw(); } return; }
+  if (m.t === 'dice') {
+    const n = s.players.length, r = m.res || {};
+    if (!Array.isArray(r.rolls) || r.rolls.length !== n) return;
+    const rolls = r.rolls.map(x => (Array.isArray(x) ? x : []).slice(0, 10).map(v => num(v, 1, 20, 1)));
+    const win = Number.isInteger(r.win) && r.win >= 0 && r.win < n ? r.win : -1; if (win < 0 || !rolls.every(x => x.length)) return;
+    return lifeDice({ rolls, win }, m.by ? String(m.by).slice(0, 20) : '');
+  }
   if (m.t === 'seat') {
     const i = num(m.p, 0, 5, -1); if (!s.players[i]) return;
     s.seats = s.seats || {}; s.seats[i] = String(m.from).slice(0, 20);
@@ -2091,7 +2098,7 @@ function lifeRedraw() {
   });
   if (!$('#modal').hidden && $('.modal-box').dataset.lifeMore != null) lifeMore(+$('.modal-box').dataset.lifeMore);
 }
-const lifeExtra = (p, s) => `${p.poison ? `<span title="Gift">☠ ${p.poison}</span>` : ''}${s.players.map((_, j) => p.cmd[j] ? `<span title="Befälhavarskada från ${esc(s.players[j].name)}">⚔ ${esc(s.players[j].name.slice(0, 8))} ${p.cmd[j]}</span>` : '').join('')}`;
+const lifeExtra = (p, s) => `${s.starter != null && s.players[s.starter] === p ? '<span title="Slog högst och börjar">🎲 börjar</span>' : ''}${p.poison ? `<span title="Gift">☠ ${p.poison}</span>` : ''}${s.players.map((_, j) => p.cmd[j] ? `<span title="Befälhavarskada från ${esc(s.players[j].name)}">⚔ ${esc(s.players[j].name.slice(0, 8))} ${p.cmd[j]}</span>` : '').join('')}`;
 
 function viewLife(code) {
   setNav('matcher');
@@ -2169,7 +2176,7 @@ function viewLife(code) {
       <div class="extra">${lifeExtra(p, s)}</div>
       <button class="more" data-more aria-label="Gift och befälhavarskada">⋯</button>
     </div>`).join('')}
-    <div class="lbar">${sh ? `<button class="btn small" id="lInvite" title="Bjud in de andra">Kod ${esc(s.room)}</button><span class="small" id="lPeers" style="color:#aaa"></span>` : ''}<button class="btn small" id="lEnd">Avsluta</button><button class="btn small" id="lReset">Börja om</button><button class="btn small" id="lExit">Stäng</button></div></div>`;
+    <div class="lbar">${sh ? `<button class="btn small" id="lInvite" title="Bjud in de andra">Kod ${esc(s.room)}</button><span class="small" id="lPeers" style="color:#aaa"></span>` : ''}<button class="btn small" id="lDice" title="Vem börjar?" aria-label="Slå tärning om vem som börjar">🎲</button><button class="btn small" id="lEnd">Avsluta</button><button class="btn small" id="lReset">Börja om</button><button class="btn small" id="lExit">Stäng</button></div></div>`;
   updateRoomBar();
   const life = $('.life');
   // håll inne = ±10 i taget
@@ -2199,12 +2206,43 @@ function viewLife(code) {
   $('#lReset').onclick = () => {
     if (!confirm('Börja om med samma spelare?')) return;
     for (const p of s.players) Object.assign(p, { life: s.setup.life, poison: 0, cmd: {} });
-    s.start = Date.now(); s.applied = []; saveLife();
+    s.start = Date.now(); s.applied = []; s.starter = undefined; saveLife();
     if (sh) roomSend({ t: 'reset', state: Object.fromEntries(shared.map(k => [k, s[k]])) });
     render();
   };
   $('#lExit').onclick = () => { wakeLock(false); document.body.classList.remove('life-on'); location.hash = '#/matcher'; };
   $('#lEnd').onclick = () => lifeEnd();
+  $('#lDice').onclick = () => lifeRoll();
+}
+// ---- vem börjar: alla slår en d20, högst börjar, de som delar högsta slår om ----
+const d20 = () => 1 + crypto.getRandomValues(new Uint32Array(1))[0] % 20;
+function rollStart(n) {
+  const rolls = Array.from({ length: n }, () => [d20()]);
+  let tied = [...rolls.keys()];
+  for (;;) {
+    const best = Math.max(...tied.map(i => rolls[i].at(-1)));
+    tied = tied.filter(i => rolls[i].at(-1) === best);
+    if (tied.length === 1 || rolls[0].length >= 10) return { rolls, win: tied[0] };
+    for (const i of tied) rolls[i].push(d20());
+  }
+}
+function lifeRoll() {
+  const s = lifeState(), res = rollStart(s.players.length);
+  const by = s.room ? s.players[s.me]?.name || '' : '';
+  if (s.room) roomSend({ t: 'dice', res, by });
+  lifeDice(res);
+}
+function lifeDice(res, by = '') {
+  const s = lifeState();
+  if (!location.hash.startsWith('#/liv') || !s.players[res.win]) return;
+  s.starter = res.win; saveLife(); lifeRedraw();
+  const order = s.players.map((p, i) => i).sort((x, y) => (x === res.win ? -1 : y === res.win ? 1 : res.rolls[y][0] - res.rolls[x][0]));
+  openModal(`<div class="row"><h2 style="margin:0">🎲 ${esc(s.players[res.win].name)} börjar!</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
+    <p class="muted small">${by ? esc(by) + ' slog. ' : ''}Alla slår en d20 och högst börjar. Blir det lika slår de som delar högsta om.</p>
+    <div class="dice">${order.map(i => `<div class="row ${i === res.win ? 'win' : ''}"><span>${esc(s.players[i].name)}</span><span class="spacer"></span><b>${res.rolls[i].join(' → ')}</b></div>`).join('')}</div>
+    <div class="row" style="margin-top:.8rem"><span class="spacer"></span><button class="btn small" id="lReroll">Slå om</button><button class="btn small primary" data-close>Kör!</button></div>`, box => {
+    $('#lReroll', box).onclick = () => lifeRoll();
+  });
 }
 function lifeMore(i) {
   const s = lifeState(), p = s.players[i];
