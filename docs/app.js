@@ -649,6 +649,7 @@ function cardRow(deck, c) {
     <span class="q">${c.qty}</span>
     <span class="nm ${info ? '' : 'missing'}" data-open data-img="${esc(ownImg(c.name))}">${esc(c.name)}${info?.game_changer ? ' <span class="gc" title="Game changer">GC</span>' : ''}${lentQty(c.name) ? ` <span class="lent" title="Utlånat: ${esc(S.loans.filter(l => l.name === c.name).map(l => l.borrower).join(', '))}">↗</span>` : ''}${S.taken?.[c.name] ? ` <span class="shared" title="${esc(S.taken[c.name])}">⇄</span>` : S.shared?.[c.name] ? ` <span class="shared" title="Du har ${S.shared[c.name].own} ex men ${S.shared[c.name].sum} behövs i ${esc(S.shared[c.name].decks.map(x => x.name).join(', '))}">⇄</span>` : ''}</span>
     <span class="mana">${info ? manaHtml(info.mana_cost) : ''}</span>
+    <span class="pr" ${c.qty > 1 && info?.eur != null ? `title="${krE(info.eur)}/st"` : ''}>${info?.eur != null ? krE(info.eur * c.qty) : ''}</span>
     <span class="acts">
       ${deck.format === 'commander' && c.board !== 'commander' && info?.commander_ok ? '<button class="icon-btn" data-act="cmd" title="Gör till befälhavare">★</button>' : ''}
       <button class="icon-btn" data-act="plus" title="En till">+</button>
@@ -665,6 +666,7 @@ function cardTile(deck, c) {
   return `<li class="${full ? 'owned' : 'lack'}" data-name="${esc(c.name)}" data-board="${c.board}">
     ${info?.thumb ? `<img loading="lazy" src="${esc(printOf1(c.name) ? printImg(printOf1(c.name), 'small') : info.thumb)}" alt="${esc(c.name)}" data-open data-img="${esc(ownImg(c.name))}">` : `<div class="noimg" data-open>${esc(c.name)}</div>`}
     ${c.qty > 1 ? `<span class="qbadge">${c.qty}×</span>` : ''}
+    ${info?.eur != null ? `<span class="pbadge">${krE(info.eur * c.qty)}</span>` : ''}
     ${showOwn ? `<label class="own-badge" title="Jag har detta kort"><input type="checkbox" data-own ${full ? 'checked' : ''}>${!full && have ? `<span>${have}/${c.qty}</span>` : ''}</label>` : ''}
   </li>`;
 }
@@ -687,11 +689,15 @@ function tabList(deck, tab) {
   S.taken = Object.fromEntries(taken.map(x => [x.name, x.text]));
   const sections = order.filter(k => groups[k]).map(k => {
     const list = groups[k].sort((a, b) => (S.cards[a.name]?.cmc ?? 99) - (S.cards[b.name]?.cmc ?? 99) || a.name.localeCompare(b.name));
-    return `<section><div class="section-head"><h3>${TYPE_SV[k] || k}</h3><span class="muted small">${list.reduce((a, c) => a + c.qty, 0)}</span></div>
+    const val = list.reduce((a, c) => a + (S.cards[c.name]?.eur || 0) * c.qty, 0);
+    return `<section><div class="section-head"><h3>${TYPE_SV[k] || k}</h3><span class="muted small">${list.reduce((a, c) => a + c.qty, 0)}${val ? ` · ${krE(val)}` : ''}</span></div>
       ${visual ? `<ul class="vgrid">${list.map(c => cardTile(deck, c)).join('')}</ul>` : `<ul class="clist">${list.map(c => cardRow(deck, c)).join('')}</ul>`}</section>`;
   }).join('');
   const issues = deckIssues(deck);
   const miss = missingCards(deck);
+  const total = deckValue(deck), missVal = miss.reduce((a, m) => a + (S.cards[m.name]?.eur || 0) * m.missing, 0);
+  const top = deck.cards.filter(c => c.board !== 'maybe' && S.cards[c.name]?.eur).sort((a, b) => S.cards[b.name].eur * b.qty - S.cards[a.name].eur * a.qty).slice(0, 5);
+  const noPrice = deck.cards.filter(c => c.board !== 'maybe' && S.cards[c.name] && S.cards[c.name].eur == null && !BASICS.has(c.name)).length;
   tab.innerHTML = `
     <div class="grid cols-2">
       <div class="card">
@@ -702,6 +708,11 @@ function tabList(deck, tab) {
         ${deck.cards.length ? `<div class="${visual ? '' : 'cols-cards'}">${sections}</div>` : '<div class="empty">Leken är tom. Sök ett kort ovan, eller klistra in en lista under Import/Export.</div>'}
       </div>
       <div class="grid" style="align-content:start">
+        ${deck.cards.length ? `<div class="card" id="deckValue"><h2>Värde</h2>
+          <p style="margin:.2rem 0"><b style="font-size:1.4rem">${krE(total)}</b> <span class="muted small">hela leken</span></p>
+          ${missVal ? `<p class="small" style="margin:.2rem 0">Du har kort för <b>${krE(Math.max(0, total - missVal))}</b>. Det som saknas kostar ca <b>${krE(missVal)}</b>.</p>` : ''}
+          ${top.length ? `<h3>Dyraste korten</h3><table class="small"><tbody>${top.map(c => `<tr><td><span data-img="${esc(ownImg(c.name))}">${esc(c.name)}</span>${c.qty > 1 ? ` <span class="muted">${c.qty}×</span>` : ''}</td><td class="num">${krE(S.cards[c.name].eur * c.qty)}</td></tr>`).join('')}</tbody></table>` : ''}
+          <p class="muted small">${priceWhat()[0].toUpperCase() + priceWhat().slice(1)}. Kanske-korten räknas inte.${noPrice ? ` ${noPrice} kort saknar pris.` : ''}</p></div>` : ''}
         <div class="card"><h2>Kontroll</h2><ul class="issues">${issues.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul>
           ${br ? `<h3>Bracket</h3><p style="margin:.2rem 0"><b>Ungefär ${br.b} – ${BRACKET_SV[br.b]}</b></p>
             <p class="small muted" style="margin:0">${br.why.length ? esc(br.why.join(', ')) + '.' : 'Inga game changers, kombos med två kort eller massförstörelse av länder.'}

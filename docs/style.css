@@ -310,3 +310,5 @@ body.life-on main { max-width: none; padding: 0; }
 @keyframes dieland { 0% { transform: translate(-50%, -50%) scale(1.25); } 100% { transform: translate(-50%, -50%) scale(1); } }
 @keyframes diewin { from { transform: translate(-50%, -50%) scale(1); } to { transform: translate(-50%, -50%) scale(1.15); } }
 @media (prefers-reduced-motion: reduce) { .die.rolling, .die.done, .die.win { animation: none; } }
+.clist .pr { min-width: 3.4rem; text-align: right; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pbadge { position: absolute; bottom: 6px; right: 6px; background: rgba(0,0,0,.75); color: #fff; font-size: .75rem; padding: 0 .35rem; border-radius: 6px; pointer-events: none; }
