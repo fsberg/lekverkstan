@@ -1616,11 +1616,19 @@ function tabTradeIdeas(ex) {
 
 // ---------- bokningar i bytesbörsen ----------
 const BOOK_SV = { requested: 'Väntar på svar', accepted: 'Godkänd', declined: 'Nekad', done: 'Klar', cancelled: 'Ångrad' };
+async function refreshCollection() {
+  const st = await api('/api/state').catch(() => null);
+  if (st) Object.assign(S, { collection: st.collection, colmeta: st.colmeta, trade: st.trade });
+}
 async function loadBookings(force) {
   if (!S.cloud || !S.v4) { S.bookings = []; return; }
   if (S.bookings && !force && Date.now() - loadBookings.at < 60000) return;
   S.bookings = await api('/api/bookings').catch(() => S.bookings || []);
   loadBookings.at = Date.now();
+  // en godkänd bokning flyttar kort mellan samlingarna i databasen: hämta om min samling när något flyttats
+  const sig = S.bookings.filter(b => b.moved).map(b => b.id).sort().join();
+  if (loadBookings.sig != null && sig !== loadBookings.sig) await refreshCollection();
+  loadBookings.sig = sig;
   updateBookBadge();
 }
 // nya förfrågningar på mina kort + svar på mina bokningar som jag inte sett
@@ -1658,16 +1666,16 @@ function tabBookings(ex) {
   const row = b => `<tr data-id="${esc(b.id)}" class="${!b.mine && b.status === 'requested' ? 'alert' : ''}">
     <td><span data-img="${esc(S.cards[b.name]?.image || scryImg(b.name))}">${esc(b.name)}</span> <span class="muted">× ${b.qty}</span>
       ${b.note ? `<div class="small">”${esc(b.note)}”</div>` : ''}${b.reply ? `<div class="small muted">Svar: ”${esc(b.reply)}”</div>` : ''}</td>
-    <td>${esc(b.other)}</td><td><span class="pill ${b.status === 'accepted' || b.status === 'done' ? 'good' : ''}">${BOOK_SV[b.status]}</span><div class="muted small">${new Date(b.updated).toLocaleDateString('sv-SE')}</div></td>
+    <td>${esc(b.other)}</td><td><span class="pill ${b.status === 'accepted' || b.status === 'done' ? 'good' : ''}">${BOOK_SV[b.status]}</span>${b.moved ? `<div class="small good">${b.mine ? 'Ligger i din samling' : 'Flyttad från din samling'}</div>` : ''}<div class="muted small">${new Date(b.updated).toLocaleDateString('sv-SE')}</div></td>
     <td class="num">${b.mine
-      ? (open(b) ? '<button class="btn small" data-bs="cancelled">Ångra</button>' : `${b.status === 'done' ? '<button class="btn small" data-bown>+ Samlingen</button> ' : ''}<button class="icon-btn" data-bdel title="Ta bort">✕</button>`)
+      ? (open(b) ? '<button class="btn small" data-bs="cancelled">Ångra</button>' : `${b.status === 'done' && !b.moved ? '<button class="btn small" data-bown>+ Samlingen</button> ' : ''}<button class="icon-btn" data-bdel title="Ta bort">✕</button>`)
       : b.status === 'requested' ? '<button class="btn small primary" data-bs="accepted">Godkänn</button> <button class="btn small" data-bs="declined">Neka</button>'
       : b.status === 'accepted' ? '<button class="btn small primary" data-bs="done">Överlämnat ✓</button> <button class="btn small" data-bs="declined">Neka</button>'
       : '<button class="icon-btn" data-bdel title="Ta bort">✕</button>'}</td></tr>`;
   const table = (list, who) => list.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>${who}</th><th>Status</th><th></th></tr></thead><tbody>${sortB(list).map(row).join('')}</tbody></table></div>` : '';
   ex.innerHTML = `<div class="card"><h2>Förfrågningar på mina kort</h2>${table(inc, 'Från') || '<p class="muted">Ingen har bokat dina kort än.</p>'}</div>
     <div class="card"><h2>Mina bokningar</h2>${table(out, 'Hos') || '<p class="muted">Du har inte bokat något. Boka kort under <a href="#/utforska/byte">Bytesbörs</a>.</p>'}</div>
-    <p class="muted small">Bara du och den andra ser en bokning. När du markerar ett kort som överlämnat kan du ta bort det ur din samling.</p>`;
+    <p class="muted small">Bara du och den andra ser en bokning. När du godkänner en bokning flyttas korten från din samling till den som bokade. Nekar eller ångrar någon efteråt flyttas de tillbaka.</p>`;
   updateBookBadge();
   ex.addEventListener('click', async e => {
     const tr = e.target.closest('tr[data-id]'); if (!tr) return;
@@ -1677,10 +1685,15 @@ function tabBookings(ex) {
       if (s) {
         const status = s.dataset.bs;
         let reply;
-        if (!b.mine && (status === 'accepted' || status === 'declined')) { reply = prompt(status === 'accepted' ? 'Svar till ' + b.other + ' (valfritt), t.ex. när ni kan ses:' : 'Varför? (valfritt)', b.reply || ''); if (reply === null) return; }
-        if (status === 'cancelled' && !confirm(`Ångra bokningen av ${b.name}?`)) return;
+        if (!b.mine && (status === 'accepted' || status === 'declined')) { reply = prompt(status === 'accepted' ? ('moved' in b ? `${b.qty} ex ${b.name} flyttas från din samling till ${b.other} när du godkänner. ` : '') + 'Svar till ' + b.other + ' (valfritt), t.ex. när ni kan ses:' : ('moved' in b && b.moved ? 'Kortet flyttas tillbaka till din samling. ' : '') + 'Varför? (valfritt)', b.reply || ''); if (reply === null) return; }
+        if (status === 'cancelled' && !confirm(`Ångra bokningen av ${b.name}?${b.moved ? ' Kortet går tillbaka till ' + b.other + '.' : ''}`)) return;
+        const was = b.moved;
         Object.assign(b, await api('/api/bookings/' + b.id, { method: 'PUT', body: { status, ...(reply != null ? { reply } : {}) } }));
-        if (status === 'done' && S.collection[b.name] && confirm(`Ta bort ${b.qty} ex ${b.name} ur din samling?`)) {
+        if (b.moved !== was && 'moved' in b) {
+          await refreshCollection(); loadBookings.sig = S.bookings.filter(x => x.moved).map(x => x.id).sort().join();
+          toast(b.moved ? `${b.qty} ex ${b.name} flyttades till ${b.other}` : `${b.name} flyttades tillbaka`, 3500);
+        }
+        if (status === 'done' && !b.moved && S.collection[b.name] && confirm(`Ta bort ${b.qty} ex ${b.name} ur din samling?`)) {
           const left = Math.max(0, S.collection[b.name] - b.qty), tr2 = Math.min(S.trade[b.name] || 0, left);
           await setOwned(b.name, left);
           if ((S.trade[b.name] || 0) !== tr2) { await api('/api/trade', { method: 'PUT', body: { [b.name]: tr2 } }); if (tr2) S.trade[b.name] = tr2; else delete S.trade[b.name]; }
@@ -2718,7 +2731,7 @@ function notifications() {
   for (const b of S.bookings || []) {
     const at = Date.parse(b.updated) || 0;
     if (!b.mine && b.status === 'requested') out.push({ at, href: '#/utforska/bokningar', isNew: true, text: `${b.other} vill boka ${b.qty} × ${b.name}`, sub: b.note ? `”${b.note}”` : 'Svara under Bokningar' });
-    else if (b.mine && ['accepted', 'declined', 'done'].includes(b.status)) out.push({ at, href: '#/utforska/bokningar', isNew: at > seen, text: `${b.other} ${b.status === 'accepted' ? 'godkände' : b.status === 'declined' ? 'nekade' : 'har lämnat över'} ${b.name}`, sub: b.reply ? `”${b.reply}”` : BOOK_SV[b.status] });
+    else if (b.mine && ['accepted', 'declined', 'done'].includes(b.status)) out.push({ at, href: '#/utforska/bokningar', isNew: at > seen, text: `${b.other} ${b.status === 'accepted' ? 'godkände' : b.status === 'declined' ? 'nekade' : 'har lämnat över'} ${b.name}`, sub: [b.moved && b.status !== 'done' ? 'Kortet ligger nu i din samling' : '', b.reply ? `”${b.reply}”` : ''].filter(Boolean).join(' · ') || BOOK_SV[b.status] });
   }
   const evSeen = eventsSeenAt();
   for (const e of (S.events || []).filter(x => !x.mine && eventActive(x))) {
