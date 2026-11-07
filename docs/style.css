@@ -312,3 +312,14 @@ body.life-on main { max-width: none; padding: 0; }
 @media (prefers-reduced-motion: reduce) { .die.rolling, .die.done, .die.win { animation: none; } }
 .clist .pr { min-width: 3.4rem; text-align: right; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pbadge { position: absolute; bottom: 6px; right: 6px; background: rgba(0,0,0,.75); color: #fff; font-size: .75rem; padding: 0 .35rem; border-radius: 6px; pointer-events: none; }
+.clist .pr.own { color: var(--text-2); font-weight: 600; }
+/* jämför lekar */
+.cmpcurve { display: flex; gap: .4rem; align-items: stretch; height: 140px; }
+.cmpcurve > div { flex: 1; display: flex; flex-direction: column; align-items: center; }
+.cmpcurve .bars { flex: 1; width: 100%; display: flex; align-items: flex-end; gap: 2px; }
+.cmpcurve .bars span { flex: 1; border-radius: 3px 3px 0 0; min-height: 1px; }
+.cmpcurve .a, .dot.a { background: var(--accent); }
+.cmpcurve .b, .dot.b { background: #e0a030; }
+.dot.a, .dot.b { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; vertical-align: middle; }
+.cmplist { margin: .2rem 0; padding-left: 1.1rem; columns: 2 11rem; }
+.grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }

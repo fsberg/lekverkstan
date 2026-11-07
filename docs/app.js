@@ -77,6 +77,19 @@ async function savePrints(name, prints) {
   (S.colmeta[name] = S.colmeta[name] || { added: Date.now() }).prints = r.prints || prints;
 }
 const printsOf = name => S.colmeta[name]?.prints || [];
+// värdet för ett antal ex: dina angivna utgåvor först (foil, specialutgåvor), resten till billigaste utgåvan
+function cardVal(name, qty) {
+  const c = S.cards[name];
+  let v = 0, left = qty, any = c?.eur != null;
+  for (const p of printsOf(name)) {
+    if (left <= 0) break;
+    const e = p.eur ?? (p.foil ? c?.eur_foil : null) ?? c?.eur;
+    if (e == null) continue;
+    const k = Math.min(left, p.qty); v += e * k; left -= k; any = true;
+  }
+  return any ? v + left * (c?.eur || 0) : null;
+}
+const ownPrinted = (name, qty) => printsOf(name).some(p => p.eur != null) && cardVal(name, qty) !== (S.cards[name]?.eur ?? 0) * qty;
 const foilQty = name => printsOf(name).filter(p => p.foil).reduce((a, p) => a + p.qty, 0);
 // värde för det man äger: angivna utgåvor med sina priser, resten till billigaste utgåvan
 function colValue(name) {
@@ -569,6 +582,7 @@ function viewDeck(id) {
       <select id="deckFormat"><option value="commander" ${deck.format === 'commander' ? 'selected' : ''}>Commander</option><option value="modern" ${deck.format === 'modern' ? 'selected' : ''}>Modern</option></select>
       ${S.cloud ? `<label class="small row" title="Publika lekar syns för alla inloggade under Utforska. Bara du kan ändra dem."><input type="checkbox" id="deckPublic" ${deck.public ? 'checked' : ''}> Publik</label>` : ''}
       ${S.v6 ? `<label class="small row" title="Korten sitter i leken och räknas som upptagna i dina andra lekar"><input type="checkbox" id="built" ${deck.built ? 'checked' : ''}> Ihopbyggd</label>` : ''}
+      <button class="btn small" id="cmpDeck">Jämför</button>
       <button class="btn danger small" id="delDeck">Radera</button>
     </div>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>
@@ -588,6 +602,7 @@ function viewDeck(id) {
       toast(on ? 'Korten räknas nu som upptagna i dina andra lekar' : 'Korten räknas som lediga igen', 3000);
     } catch (err) { deck.built = !on; render(); toast('Kunde inte spara: ' + err.message); }
   };
+  $('#cmpDeck').onclick = () => compareModal(deck);
   $('#delDeck').onclick = () => openModal(`<h2>Radera "${esc(deck.name)}"?</h2><p class="muted">Din samling påverkas inte.</p>
     <p class="row"><span class="spacer"></span><button class="btn" data-close>Avbryt</button><button class="btn primary" id="delOk">Radera</button></p>`, box => {
     $('#delOk', box).onclick = async () => { await api('/api/decks/' + deck.id, { method: 'DELETE' }); S.decks = S.decks.filter(d => d !== deck); closeModal(); location.hash = '#/'; };
@@ -649,7 +664,7 @@ function cardRow(deck, c) {
     <span class="q">${c.qty}</span>
     <span class="nm ${info ? '' : 'missing'}" data-open data-img="${esc(ownImg(c.name))}">${esc(c.name)}${info?.game_changer ? ' <span class="gc" title="Game changer">GC</span>' : ''}${lentQty(c.name) ? ` <span class="lent" title="Utlånat: ${esc(S.loans.filter(l => l.name === c.name).map(l => l.borrower).join(', '))}">↗</span>` : ''}${S.taken?.[c.name] ? ` <span class="shared" title="${esc(S.taken[c.name])}">⇄</span>` : S.shared?.[c.name] ? ` <span class="shared" title="Du har ${S.shared[c.name].own} ex men ${S.shared[c.name].sum} behövs i ${esc(S.shared[c.name].decks.map(x => x.name).join(', '))}">⇄</span>` : ''}</span>
     <span class="mana">${info ? manaHtml(info.mana_cost) : ''}</span>
-    <span class="pr" ${c.qty > 1 && info?.eur != null ? `title="${krE(info.eur)}/st"` : ''}>${info?.eur != null ? krE(info.eur * c.qty) : ''}</span>
+    <span class="pr ${ownPrinted(c.name, c.qty) ? 'own' : ''}" title="${ownPrinted(c.name, c.qty) ? 'Räknat på dina utgåvor' : c.qty > 1 && info?.eur != null ? krE(info.eur) + '/st' : ''}">${cardVal(c.name, c.qty) != null ? krE(cardVal(c.name, c.qty)) : ''}</span>
     <span class="acts">
       ${deck.format === 'commander' && c.board !== 'commander' && info?.commander_ok ? '<button class="icon-btn" data-act="cmd" title="Gör till befälhavare">★</button>' : ''}
       <button class="icon-btn" data-act="plus" title="En till">+</button>
@@ -666,7 +681,7 @@ function cardTile(deck, c) {
   return `<li class="${full ? 'owned' : 'lack'}" data-name="${esc(c.name)}" data-board="${c.board}">
     ${info?.thumb ? `<img loading="lazy" src="${esc(printOf1(c.name) ? printImg(printOf1(c.name), 'small') : info.thumb)}" alt="${esc(c.name)}" data-open data-img="${esc(ownImg(c.name))}">` : `<div class="noimg" data-open>${esc(c.name)}</div>`}
     ${c.qty > 1 ? `<span class="qbadge">${c.qty}×</span>` : ''}
-    ${info?.eur != null ? `<span class="pbadge">${krE(info.eur * c.qty)}</span>` : ''}
+    ${cardVal(c.name, c.qty) != null ? `<span class="pbadge">${krE(cardVal(c.name, c.qty))}</span>` : ''}
     ${showOwn ? `<label class="own-badge" title="Jag har detta kort"><input type="checkbox" data-own ${full ? 'checked' : ''}>${!full && have ? `<span>${have}/${c.qty}</span>` : ''}</label>` : ''}
   </li>`;
 }
@@ -689,14 +704,14 @@ function tabList(deck, tab) {
   S.taken = Object.fromEntries(taken.map(x => [x.name, x.text]));
   const sections = order.filter(k => groups[k]).map(k => {
     const list = groups[k].sort((a, b) => (S.cards[a.name]?.cmc ?? 99) - (S.cards[b.name]?.cmc ?? 99) || a.name.localeCompare(b.name));
-    const val = list.reduce((a, c) => a + (S.cards[c.name]?.eur || 0) * c.qty, 0);
+    const val = list.reduce((a, c) => a + (cardVal(c.name, c.qty) || 0), 0);
     return `<section><div class="section-head"><h3>${TYPE_SV[k] || k}</h3><span class="muted small">${list.reduce((a, c) => a + c.qty, 0)}${val ? ` · ${krE(val)}` : ''}</span></div>
       ${visual ? `<ul class="vgrid">${list.map(c => cardTile(deck, c)).join('')}</ul>` : `<ul class="clist">${list.map(c => cardRow(deck, c)).join('')}</ul>`}</section>`;
   }).join('');
   const issues = deckIssues(deck);
   const miss = missingCards(deck);
   const total = deckValue(deck), missVal = miss.reduce((a, m) => a + (S.cards[m.name]?.eur || 0) * m.missing, 0);
-  const top = deck.cards.filter(c => c.board !== 'maybe' && S.cards[c.name]?.eur).sort((a, b) => S.cards[b.name].eur * b.qty - S.cards[a.name].eur * a.qty).slice(0, 5);
+  const top = deck.cards.filter(c => c.board !== 'maybe' && cardVal(c.name, c.qty)).sort((a, b) => cardVal(b.name, b.qty) - cardVal(a.name, a.qty)).slice(0, 5);
   const noPrice = deck.cards.filter(c => c.board !== 'maybe' && S.cards[c.name] && S.cards[c.name].eur == null && !BASICS.has(c.name)).length;
   tab.innerHTML = `
     <div class="grid cols-2">
@@ -711,8 +726,8 @@ function tabList(deck, tab) {
         ${deck.cards.length ? `<div class="card" id="deckValue"><h2>Värde</h2>
           <p style="margin:.2rem 0"><b style="font-size:1.4rem">${krE(total)}</b> <span class="muted small">hela leken</span></p>
           ${missVal ? `<p class="small" style="margin:.2rem 0">Du har kort för <b>${krE(Math.max(0, total - missVal))}</b>. Det som saknas kostar ca <b>${krE(missVal)}</b>.</p>` : ''}
-          ${top.length ? `<h3>Dyraste korten</h3><table class="small"><tbody>${top.map(c => `<tr><td><span data-img="${esc(ownImg(c.name))}">${esc(c.name)}</span>${c.qty > 1 ? ` <span class="muted">${c.qty}×</span>` : ''}</td><td class="num">${krE(S.cards[c.name].eur * c.qty)}</td></tr>`).join('')}</tbody></table>` : ''}
-          <p class="muted small">${priceWhat()[0].toUpperCase() + priceWhat().slice(1)}. Kanske-korten räknas inte.${noPrice ? ` ${noPrice} kort saknar pris.` : ''}</p></div>` : ''}
+          ${top.length ? `<h3>Dyraste korten</h3><table class="small"><tbody>${top.map(c => `<tr><td><span data-img="${esc(ownImg(c.name))}">${esc(c.name)}</span>${c.qty > 1 ? ` <span class="muted">${c.qty}×</span>` : ''}</td><td class="num">${krE(cardVal(c.name, c.qty))}</td></tr>`).join('')}</tbody></table>` : ''}
+          <p class="muted small">${priceWhat()[0].toUpperCase() + priceWhat().slice(1)}. Kort du äger räknas på de utgåvor du angett i samlingen, resten på billigaste utgåvan. Kanske-korten räknas inte.${noPrice ? ` ${noPrice} kort saknar pris.` : ''}</p></div>` : ''}
         <div class="card"><h2>Kontroll</h2><ul class="issues">${issues.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('')}</ul>
           ${br ? `<h3>Bracket</h3><p style="margin:.2rem 0"><b>Ungefär ${br.b} – ${BRACKET_SV[br.b]}</b></p>
             <p class="small muted" style="margin:0">${br.why.length ? esc(br.why.join(', ')) + '.' : 'Inga game changers, kombos med två kort eller massförstörelse av länder.'}
@@ -823,7 +838,7 @@ function tabStats(deck, tab) {
   }
   const types = {};
   for (const c of play) { const t = c.board === 'commander' ? 'Commander' : mainType(S.cards[c.name]); types[t] = (types[t] || 0) + c.qty; }
-  const value = play.reduce((a, c) => a + (S.cards[c.name]?.eur || 0) * c.qty, 0);
+  const value = play.reduce((a, c) => a + (cardVal(c.name, c.qty) || 0), 0);
   const missVal = missingCards(deck).reduce((a, m) => a + (S.cards[m.name]?.eur || 0) * m.missing, 0);
   const { Länder: _l, ...roleCount } = roleCounts(deck);
   const pipNames = { W: 'Vit', U: 'Blå', B: 'Svart', R: 'Röd', G: 'Grön', C: 'Färglös' };
@@ -1406,6 +1421,9 @@ function viewSettings() {
     ${S.cloud ? `<h3>Ditt namn</h3>
     <p class="small muted">Syns för andra inloggade på dina publika lekar och i bytesbörsen. Inloggad som ${esc(S.profile.email || '')}.</p>
     <div class="row"><input type="text" id="dispName" maxlength="40" placeholder="T.ex. Jonte" style="flex:1" value="${esc(S.profile.name || '')}"><button class="btn primary" id="saveName">Spara namn</button></div>` : ''}
+    ${S.cloud && S.v8 ? `<h3>Bytesförslag</h3>
+    <label class="small row"><input type="checkbox" id="shareWants" ${S.profile.wants ? 'checked' : ''}> Visa vad jag saknar för den som har kortet till byte</label>
+    <p class="small muted">Den som har ett kort till byte som saknas i dina lekar eller står på din önskelista får se det under Bytesförslag. Inget annat i din samling eller önskelista visas.</p>` : ''}
     <h3>Installera som app</h3>
     ${window.matchMedia?.('(display-mode: standalone)').matches ? '<p class="small good">Lekverkstan körs redan som installerad app.</p>'
       : installEvt ? '<p class="small muted">Lägg Lekverkstan på hemskärmen. Den startar då som en vanlig app och lekarna går att titta på utan nät.</p><button class="btn primary" id="install">Installera</button>'
@@ -1423,6 +1441,11 @@ function viewSettings() {
     render();
   };
   if ($('#install')) $('#install').onclick = async () => { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; render(); };
+  if ($('#shareWants')) $('#shareWants').onchange = async e => {
+    if (!S.profile.name) { e.target.checked = false; return toast('Sätt ditt namn först', 3500); }
+    try { await api('/api/profile', { method: 'PUT', body: { name: S.profile.name, wants: e.target.checked } }); S.profile.wants = e.target.checked; toast(e.target.checked ? 'Kompisar med kort till byte ser nu vad du saknar' : 'Det du saknar delas inte längre'); }
+    catch (err) { e.target.checked = !e.target.checked; toast('Kunde inte spara: ' + err.message, 4000); }
+  };
   if ($('#saveName')) $('#saveName').onclick = async () => {
     const name = $('#dispName').value.trim();
     if (!name) return toast('Skriv ett namn');
@@ -1450,7 +1473,7 @@ async function loadPublic(force) {
   loadPublic.at = Date.now();
 }
 const deckTotal = d => d.cards.filter(c => c.board === 'main' || c.board === 'commander').reduce((a, c) => a + c.qty, 0);
-const deckValue = d => d.cards.filter(c => c.board !== 'maybe').reduce((a, c) => a + (S.cards[c.name]?.eur || 0) * c.qty, 0);
+const deckValue = d => d.cards.filter(c => c.board !== 'maybe').reduce((a, c) => a + (cardVal(c.name, c.qty) || 0), 0);
 // kort som flera lekar behöver men där samlingen inte räcker till alla samtidigt: { namn: { own, sum, decks: [{ id, name, qty }] } }
 function sharedShortage() {
   const need = {};
@@ -1488,11 +1511,11 @@ function deckArt(d) {
 
 function viewExplore(sub) {
   setNav('utforska');
-  const tabs = [['lekar', 'Publika lekar'], ['byte', 'Bytesbörs'], ...(S.v4 ? [['bokningar', 'Bokningar' + (bookingAlerts() ? ` <span class="badge">${bookingAlerts()}</span>` : '')]] : [])];
-  sub = ['byte', 'bokningar'].includes(sub) ? sub : 'lekar';
+  const tabs = [['lekar', 'Publika lekar'], ['byte', 'Bytesbörs'], ['forslag', 'Bytesförslag'], ...(S.v4 ? [['bokningar', 'Bokningar' + (bookingAlerts() ? ` <span class="badge">${bookingAlerts()}</span>` : '')]] : [])];
+  sub = ['byte', 'forslag', 'bokningar'].includes(sub) ? sub : 'lekar';
   $('#app').innerHTML = `<div class="row"><h1>Utforska</h1><span class="spacer"></span><button class="btn small" id="reload">↻ Uppdatera</button></div>
     <div class="tabs">${tabs.map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/utforska/${k}">${l}</a>`).join('')}</div><div id="ex"></div>`;
-  $('#reload').onclick = async () => { await Promise.all([loadPublic(true), loadTrades(true), loadBookings(true)]); render(); };
+  $('#reload').onclick = async () => { await Promise.all([loadPublic(true), loadTrades(true), loadBookings(true), loadWants(true)]); render(); };
   const ex = $('#ex');
   if (!S.cloud) { ex.innerHTML = '<div class="card empty">Utforska finns bara i molnversionen.</div>'; return; }
   if (sub === 'lekar') {
@@ -1507,6 +1530,7 @@ function viewExplore(sub) {
     return;
   }
   if (sub === 'bokningar') return tabBookings(ex);
+  if (sub === 'forslag') return tabTradeIdeas(ex);
   // bytesbörs
   if (!S.trades || !S.bookings) {
     ex.innerHTML = '<p class="muted">Hämtar…</p>';
@@ -1537,6 +1561,57 @@ function viewExplore(sub) {
   $('#onlyNeed').onchange = e => { opt.onlyNeed = e.target.checked; render(); };
   $('#tq').oninput = e => { opt.q = e.target.value; clearTimeout(viewExplore.t); viewExplore.t = setTimeout(() => { render(); const i = $('#tq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
   ex.addEventListener('click', e => { const b = e.target.closest('[data-book]'); if (b) bookModal(rows[+b.dataset.book]); });
+}
+
+// ---------- bytesförslag: vad du kan få och ge, per person ----------
+async function loadWants(force) {
+  if (!S.cloud || !S.v8) { S.wants = []; return; }
+  if (S.wants && !force && Date.now() - loadWants.at < 120000) return;
+  S.wants = await api('/api/trade-wants').catch(() => S.wants || []);
+  loadWants.at = Date.now();
+}
+function tradeIdeas() {
+  const need = {}, bump = (n, q) => { const k = n.toLowerCase(); need[k] = Math.max(need[k] || 0, q); };
+  for (const d of S.decks) for (const m of missingCards(d)) bump(m.name, m.missing);
+  for (const w of S.wishlist) bump(w.name, w.qty || 1);
+  const mine = Object.fromEntries(Object.entries(S.trade).map(([n, q]) => [n.toLowerCase(), { name: n, q }]));
+  const people = {}, P = (id, name) => (people[id] = people[id] || { id, name, get: [], give: [] });
+  for (const t of S.trades || []) { const n = need[t.name.toLowerCase()]; if (n && !(S.basicsOwned && BASICS.has(t.name))) P(t.owner, t.ownerName).get.push({ t, name: t.name, qty: Math.min(n, t.qty) }); }
+  for (const w of S.wants || []) { const m = mine[String(w.name).toLowerCase()]; if (m && !BASICS.has(m.name)) P(w.owner, w.player).give.push({ name: m.name, qty: Math.min(m.q, w.qty), src: w.src }); }
+  const val = l => l.reduce((a, x) => a + (S.cards[x.name]?.eur || 0) * x.qty, 0);
+  return Object.values(people).map(p => ({ ...p, getVal: val(p.get), giveVal: val(p.give) }))
+    .sort((x, y) => (Math.min(y.get.length, 1) + Math.min(y.give.length, 1)) - (Math.min(x.get.length, 1) + Math.min(x.give.length, 1)) || (y.getVal + y.giveVal) - (x.getVal + x.giveVal));
+}
+function tabTradeIdeas(ex) {
+  if (!S.trades || !S.bookings || !S.wants) {
+    ex.innerHTML = '<p class="muted">Hämtar…</p>';
+    Promise.all([loadTrades(), loadBookings(), loadWants()]).then(async () => { await ensureCards([...S.trades.map(t => t.name), ...S.wants.map(w => w.name)]).catch(() => {}); render(); });
+    return;
+  }
+  const list = tradeIdeas();
+  const myBooking = t => S.bookings.find(b => b.mine && b.seller === t.owner && b.name === t.name && ['requested', 'accepted'].includes(b.status));
+  const books = [];
+  const balance = p => {
+    if (!p.get.length) return 'Du har kort som hen saknar. Hen har inget till byte som du behöver just nu.';
+    if (!p.give.length) return S.v8 ? 'Hen har kort du behöver, men saknar inget av det du har till byte.' : '';
+    const d = sek(p.getVal) - sek(p.giveVal);
+    return Math.abs(d) <= Math.max(10, 0.15 * sek(Math.max(p.getVal, p.giveVal))) ? '<b class="good">Ungefär jämnt byte.</b>' : d > 0 ? `Du får ca <b>${krE(p.getVal - p.giveVal)}</b> mer, lägg till något från din byteslista.` : `Du ger ca <b>${krE(p.giveVal - p.getVal)}</b> mer.`;
+  };
+  const item = x => `<li><span data-img="${esc(S.cards[x.name]?.image || scryImg(x.name))}">${x.qty > 1 ? x.qty + ' ' : ''}${esc(x.name)}</span> <span class="muted">${krE(S.cards[x.name]?.eur != null ? S.cards[x.name].eur * x.qty : null)}</span>${x.src ? ` <span class="muted small">(${esc(x.src.split(',').map(s => s === 'lek' ? 'saknas i en lek' : 'önskelista').join(', '))})</span>` : ''}${x.t && S.v4 ? (b => b ? ` <span class="pill ${b.status === 'accepted' ? 'good' : ''}">${BOOK_SV[b.status]}</span>` : ` <button class="btn small" data-tbook="${books.push(x.t) - 1}">Boka</button>`)(myBooking(x.t)) : ''}</li>`;
+  const tips = [
+    !Object.keys(S.trade).length && 'Markera kort till byte under <a href="#/samling">Samling</a>, så kan andra se vad du har.',
+    S.v8 && !S.profile.wants && 'Slå på <b>Visa vad jag saknar</b> under <a href="#/installningar">Inställningar</a>, så ser kompisarna vad de kan ge dig.',
+    !S.v8 && 'Vad du kan ge andra visas när databasen har uppdaterats.',
+  ].filter(Boolean);
+  ex.innerHTML = `${list.length ? list.map(p => `<div class="card trade-idea" style="margin-bottom:1rem"><h2>${esc(p.name)}</h2>
+      <div class="grid cols-2">
+        <div><h3>Du kan få <span class="muted small">${p.get.length ? 'ca ' + krE(p.getVal) : ''}</span></h3>${p.get.length ? `<ul class="small">${p.get.map(item).join('')}</ul>` : '<p class="muted small">Inget du behöver just nu.</p>'}</div>
+        <div><h3>Du kan ge <span class="muted small">${p.give.length ? 'ca ' + krE(p.giveVal) : ''}</span></h3>${p.give.length ? `<ul class="small">${p.give.map(item).join('')}</ul>` : `<p class="muted small">${S.v8 ? 'Inget av det du har till byte, eller så delar hen inte vad hen saknar.' : '–'}</p>`}</div>
+      </div><p class="small" style="margin-bottom:0">${balance(p)}</p></div>`).join('')
+    : '<div class="card empty">Inga förslag än. Förslagen bygger på kort som saknas i era lekar och på önskelistorna, och på vad var och en har markerat till byte.</div>'}
+    <p class="muted small">Du kan få: kort andra har till byte som saknas i dina lekar eller står på din önskelista. Du kan ge: kort du har till byte som någon saknar, om hen delar det. Priserna är ${priceWhat()}.</p>
+    ${tips.map(t => `<p class="small">${t}</p>`).join('')}`;
+  ex.onclick = e => { const b = e.target.closest('[data-tbook]'); if (b) bookModal(books[+b.dataset.tbook]); };
 }
 
 // ---------- bokningar i bytesbörsen ----------
@@ -1621,6 +1696,73 @@ function tabBookings(ex) {
   });
 }
 
+// ---------- jämför två lekar ----------
+const findDeck = id => S.decks.find(d => d.id === id) || (S.publicDecks || []).find(d => d.id === id);
+async function compareModal(deck) {
+  if (S.cloud && !S.publicDecks) await loadPublic().catch(() => {});
+  const others = [...S.decks.filter(d => d.id !== deck.id).map(d => ({ id: d.id, label: d.name, sub: FORMAT_SV[d.format] })),
+    ...(S.publicDecks || []).filter(d => d.id !== deck.id && !S.decks.some(x => x.id === d.id)).map(d => ({ id: d.id, label: d.name, sub: 'av ' + d.ownerName }))];
+  if (!others.length) return toast('Det finns ingen annan lek att jämföra med');
+  const mine = S.decks.some(d => d.id === deck.id);
+  openModal(`<div class="row"><h2 style="margin:0">Jämför ${esc(deck.name)} med…</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
+    <div class="grid" style="margin-top:.6rem">${others.map(o => `<a class="btn" style="justify-content:space-between" href="#/jamfor/${mine ? deck.id : o.id}/${mine ? o.id : deck.id}"><span>${esc(o.label)}</span><span class="muted small">${esc(o.sub)}</span></a>`).join('')}</div>`,
+    box => { box.onclick = e => { if (e.target.closest('a')) closeModal(); }; });
+}
+function deckSummary(d) {
+  const play = d.cards.filter(c => c.board === 'main' || c.board === 'commander');
+  const isLand = c => mainType(S.cards[c.name]) === 'Land';
+  const curve = Array(8).fill(0);
+  let sum = 0, n = 0;
+  for (const c of play.filter(c => !isLand(c))) { const v = Math.round(S.cards[c.name]?.cmc || 0); curve[Math.min(7, v)] += c.qty; sum += v * c.qty; n += c.qty; }
+  const ident = new Set(play.flatMap(c => S.cards[c.name]?.color_identity || []));
+  const names = new Map();
+  for (const c of play) names.set(c.name, (names.get(c.name) || 0) + c.qty);
+  return { total: play.reduce((a, c) => a + c.qty, 0), lands: play.filter(isLand).reduce((a, c) => a + c.qty, 0), avg: n ? sum / n : 0, curve,
+    roles: roleCounts(d), value: deckValue(d), share: ownedShare(d), bracket: d.format === 'commander' ? bracketInfo(d).b : null, colors: WUBRG.filter(c => ident.has(c)), names };
+}
+function viewCompare(aId, bId) {
+  setNav('lekar');
+  const A = findDeck(aId), B = findDeck(bId);
+  if ((!A || !B) && S.cloud && !S.publicDecks) { $('#app').innerHTML = '<p class="muted">Hämtar…</p>'; loadPublic().then(render); return; }
+  if (!A || !B) { $('#app').innerHTML = '<div class="empty">Någon av lekarna finns inte längre. <a href="#/">Tillbaka</a></div>'; return; }
+  const unknown = [...A.cards, ...B.cards].map(c => c.name).filter(n => !S.cards[n] && !S.notFound.has(n));
+  if (unknown.length && !viewCompare.loading) { viewCompare.loading = true; ensureCards(unknown).catch(() => {}).finally(() => { viewCompare.loading = false; render(); }); }
+  const a = deckSummary(A), b = deckSummary(B);
+  const link = d => S.decks.some(x => x.id === d.id) ? '#/lek/' + d.id : '#/publik/' + d.id;
+  const pips = cs => cs.length ? cs.map(c => `<span class="sym ${c}">${c}</span>`).join('') : '<span class="muted">färglös</span>';
+  const row = (label, x, y, fmt = v => v, better) => {
+    const w = better && x !== y ? (better(x, y) ? 'a' : 'b') : '';
+    return `<tr><td>${label}</td><td class="num ${w === 'a' ? 'good' : ''}">${fmt(x)}</td><td class="num ${w === 'b' ? 'good' : ''}">${fmt(y)}</td></tr>`;
+  };
+  const max = Math.max(1, ...a.curve, ...b.curve);
+  const curve = `<div class="cmpcurve">${a.curve.map((v, i) => `<div><div class="bars"><span class="a" style="height:${v / max * 100}%" title="${esc(A.name)}: ${v} kort"></span><span class="b" style="height:${b.curve[i] / max * 100}%" title="${esc(B.name)}: ${b.curve[i]} kort"></span></div><small>${i === 7 ? '7+' : i}</small></div>`).join('')}</div>`;
+  const onlyA = [...a.names].filter(([n]) => !b.names.has(n)), onlyB = [...b.names].filter(([n]) => !a.names.has(n)), both = [...a.names].filter(([n]) => b.names.has(n));
+  const list = (l, other) => l.length ? `<ul class="small cmplist">${l.sort((x, y) => x[0].localeCompare(y[0])).map(([n, q]) => `<li><span data-img="${esc(S.cards[n]?.image || '')}">${q > 1 ? q + ' ' : ''}${esc(n)}</span>${other && other.get(n) !== q ? ` <span class="muted">(${other.get(n)} i den andra)</span>` : ''}</li>`).join('')}</ul>` : '<p class="muted small">Inga.</p>';
+  const roleKeys = Object.keys(a.roles);
+  $('#app').innerHTML = `<div class="row"><a href="#/" class="icon-btn" aria-label="Tillbaka">←</a><h1 style="margin:0">Jämför lekar</h1></div>
+    <div class="grid cols-2" style="margin-top:1rem">
+      <div class="card"><table><thead><tr><th></th><th class="num"><span class="dot a"></span> <a href="${link(A)}">${esc(A.name)}</a></th><th class="num"><span class="dot b"></span> <a href="${link(B)}">${esc(B.name)}</a></th></tr></thead><tbody>
+        ${row('Format', FORMAT_SV[A.format], FORMAT_SV[B.format])}
+        ${row('Färger', a.colors, b.colors, pips)}
+        ${row('Kort', a.total, b.total)}
+        ${row('Länder', a.lands, b.lands)}
+        ${row('Snitt-manavärde', a.avg, b.avg, v => v ? v.toFixed(2) : '–', (x, y) => x < y)}
+        ${a.bracket || b.bracket ? row('Bracket, ungefär', a.bracket, b.bracket, v => v ?? '–') : ''}
+        ${row('Värde', a.value, b.value, krE)}
+        ${row('Du äger', a.share, b.share, v => Math.round(v * 100) + ' %', (x, y) => x > y)}
+        ${roleKeys.filter(k => k !== 'Länder' && (a.roles[k] || b.roles[k])).map(k => row(k, a.roles[k], b.roles[k])).join('')}
+      </tbody></table>
+      <p class="muted small">Grönt visar vilken lek som har lägst manavärde och störst del av korten i din samling.</p></div>
+      <div class="card"><h2>Manakurva <span class="muted small">(icke-länder)</span></h2>${curve}
+        <p class="small"><span class="dot a"></span> ${esc(A.name)} &nbsp; <span class="dot b"></span> ${esc(B.name)}</p></div>
+    </div>
+    <div class="grid cols-3" style="margin-top:1rem">
+      <div class="card"><h2>Bara i ${esc(A.name)} <span class="muted small">${onlyA.length}</span></h2>${list(onlyA)}</div>
+      <div class="card"><h2>I båda <span class="muted small">${both.length}</span></h2>${list(both, b.names)}</div>
+      <div class="card"><h2>Bara i ${esc(B.name)} <span class="muted small">${onlyB.length}</span></h2>${list(onlyB)}</div>
+    </div>`;
+}
+
 function viewPublicDeck(id) {
   setNav('utforska');
   if (!S.publicDecks) { $('#app').innerHTML = '<p class="muted">Hämtar…</p>'; loadPublic().then(render); return; }
@@ -1633,7 +1775,7 @@ function viewPublicDeck(id) {
   const order = ['Commander', ...TYPE_ORDER, 'Other', 'side', 'maybe'];
   const miss = missingCards(d);
   $('#app').innerHTML = `<div class="row"><a href="#/utforska" class="icon-btn" aria-label="Tillbaka">←</a><div style="flex:1"><h1>${esc(d.name)}</h1><div class="muted small">${FORMAT_SV[d.format]} · av ${esc(d.ownerName)} · ${deckTotal(d)} kort · uppdaterad ${new Date(d.updated).toLocaleDateString('sv-SE')}</div></div>
-      <button class="btn primary" id="copyDeck">Kopiera till mina lekar</button></div>
+      ${S.decks.length ? `<button class="btn" id="cmpPub">Jämför med min lek</button>` : ''}<button class="btn primary" id="copyDeck">Kopiera till mina lekar</button></div>
     <div class="grid cols-2" style="margin-top:1rem">
       <div class="card"><div class="cols-cards">${order.filter(k => groups[k]).map(k => `<section><div class="section-head"><h3>${TYPE_SV[k]}</h3><span class="muted small">${groups[k].reduce((a, c) => a + c.qty, 0)}</span></div>
         <ul class="clist">${groups[k].sort((a, b) => (S.cards[a.name]?.cmc ?? 99) - (S.cards[b.name]?.cmc ?? 99) || a.name.localeCompare(b.name)).map(c => {
@@ -1645,6 +1787,7 @@ function viewPublicDeck(id) {
           <p class="muted small">✓ = du har kortet i din samling.</p></div>
         ${d.notes ? `<div class="card"><h2>Anteckningar</h2><p style="white-space:pre-wrap">${esc(d.notes)}</p></div>` : ''}
       </div></div>`;
+  if ($('#cmpPub')) $('#cmpPub').onclick = () => compareModal(d);
   $('#copyDeck').onclick = async () => {
     const nd = await api('/api/decks', { method: 'POST', body: { name: `${d.name} (från ${d.ownerName})`.slice(0, 80), format: d.format } });
     nd.cards = d.cards.map(c => ({ ...c }));
@@ -3120,6 +3263,7 @@ function render() {
   else if (h.startsWith('/onskelista')) viewWishlist();
   else if ((m = h.match(/^\/lek\/([\w-]+)/))) { if (render.deck !== m[1]) { render.deck = m[1]; S.tab = 'lista'; tabBuy.sel = null; } viewDeck(m[1]); }
   else if ((m = h.match(/^\/publik\/([\w-]+)/))) viewPublicDeck(m[1]);
+  else if ((m = h.match(/^\/jamfor\/([\w-]+)\/([\w-]+)/))) viewCompare(m[1], m[2]);
   else if (h.startsWith('/utforska')) viewExplore(h.split('/')[2]);
   else if (h.startsWith('/matcher')) viewGames(h.split('/')[2]);
   else if (h.startsWith('/bygg')) viewBuild();

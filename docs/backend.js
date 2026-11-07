@@ -8,7 +8,7 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
-  let v2 = false, v4 = false, v7 = false;
+  let v2 = false, v4 = false, v7 = false, v8 = false;
   const colQty = {}; // egna antal, för att veta när ett kort läggs till (sortering på senast inlagt)
   let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
@@ -213,7 +213,7 @@
       ]);
       fail(d.error); fail(c.error);
       // v2-tabeller: saknas de (gammal databas) blir det bara tomt
-      const [t, g, pr, w, l, cm, bu, sh, ev] = await Promise.all([
+      const [t, g, pr, w, l, cm, bu, sh, ev, wa] = await Promise.all([
         sb.from('lv_collection').select('name, for_trade').eq('owner', user.id).gt('for_trade', 0),
         sb.from('lv_games').select('*').order('played_on', { ascending: false }).order('created', { ascending: false }),
         sb.from('lv_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
@@ -227,8 +227,11 @@
         // v7: topplista och spelkvällar
         sb.from('lv_profiles').select('share_games').eq('user_id', user.id).maybeSingle(),
         sb.from('lv_events').select('id').limit(0),
+        // v8: bytesförslag
+        sb.from('lv_profiles').select('share_wants').eq('user_id', user.id).maybeSingle(),
       ]);
       v7 = !ev.error && !sh.error;
+      v8 = !wa.error;
       v4 = !cm.error;
       for (const k of Object.keys(colQty)) delete colQty[k];
       for (const r of c.data) colQty[r.name] = r.qty;
@@ -239,16 +242,16 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
-        v3: !w.error, v4, v6: !bu.error, v7,
+        v3: !w.error, v4, v6: !bu.error, v7, v8,
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
-        profile: { name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games },
+        profile: { name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games, wants: !!wa.data?.share_wants },
         cloud: true,
         settings: { svenskaMagicUrl: ls.get('lv-sm-url', SM_DEFAULT) },
       };
     }
     if (p === '/api/profile' && m === 'PUT') {
       const name = String(body.name || '').trim().slice(0, 40);
-      fail((await sb.from('lv_profiles').upsert({ user_id: user.id, display_name: name, ...(typeof body.share === 'boolean' ? { share_games: body.share } : {}) })).error);
+      fail((await sb.from('lv_profiles').upsert({ user_id: user.id, display_name: name, ...(typeof body.share === 'boolean' ? { share_games: body.share } : {}), ...(v8 && typeof body.wants === 'boolean' ? { share_wants: body.wants } : {}) })).error);
       return { name };
     }
     if (p === '/api/trade' && m === 'PUT') {
@@ -263,6 +266,11 @@
       if (!ids.length) return {};
       const { data } = await sb.from('lv_profiles').select('user_id, display_name').in('user_id', [...new Set(ids)]);
       return Object.fromEntries((data || []).map(r => [r.user_id, r.display_name]));
+    }
+    if (p === '/api/trade-wants') {
+      if (!v8) return [];
+      const { data, error } = await sb.rpc('lv_trade_wants');
+      fail(error); return data;
     }
     if (p === '/api/leaderboard') {
       if (!v7) return [];

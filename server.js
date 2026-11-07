@@ -335,7 +335,7 @@ async function api(req, res, url) {
   if (p === '/api/archidekt' && m === 'GET') return send(res, 200, await archidekt(url.searchParams.get('id') || ''));
   if (p === '/api/public-decks' || p === '/api/trades' || p === '/api/bookings') return send(res, 200, []);
   if (p === '/api/profile' && m === 'PUT') return send(res, 200, { name: '' });
-  if (p === '/api/leaderboard' || p === '/api/events') return send(res, 200, []);
+  if (p === '/api/leaderboard' || p === '/api/events' || p === '/api/trade-wants') return send(res, 200, []);
   if (p === '/api/value-log' && m === 'GET') return send(res, 200, valueLog);
   if (p === '/api/value-log' && m === 'PUT') {
     const b = await readBody(req);
