@@ -13,8 +13,13 @@ Object.assign(S, { trade: {}, games: [], profile: { name: '' }, cloud: false, tr
 Object.assign(S, { wishlist: [], loans: [], v3: false, rate: 11.5, combos: {}, offline: false });
 Object.assign(S, { colmeta: {}, v4: false, bookings: null, v6: false, v7: false, events: null, valueLog: null });
 try { S.group = localStorage.getItem('lv-group') || 'typ'; } catch {}
-// ungefärligt värde i kronor från Scryfalls europris
-const krE = e => e == null ? '–' : Math.round(e * S.rate).toLocaleString('sv-SE') + ' kr';
+// ungefärligt värde i kronor från Scryfalls europris (Cardmarket, billigaste utgåvan).
+// Svenska butiker tar i snitt ca 30 % mer för samma utgåva (jämfört mot Alara), så det är standard.
+const MARKUP = 1.3;
+try { S.priceLevel = localStorage.getItem('lv-price') === 'cm' ? 'cm' : 'butik'; } catch { S.priceLevel = 'butik'; }
+const sek = e => e * S.rate * (S.priceLevel === 'cm' ? 1 : MARKUP);
+const krE = e => e == null ? '–' : (e > 0 && sek(e) < 1 ? '<1' : Math.round(sek(e)).toLocaleString('sv-SE')) + ' kr';
+const priceWhat = () => S.priceLevel === 'cm' ? 'Cardmarket-pris, billigaste utgåvan' : 'ungefärligt svenskt butikspris (Cardmarket + 30 %)';
 const lentQty = name => S.loans.filter(l => l.name === name).reduce((a, l) => a + l.qty, 0);
 
 const BASICS = new Set(['Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes', 'Snow-Covered Plains', 'Snow-Covered Island', 'Snow-Covered Swamp', 'Snow-Covered Mountain', 'Snow-Covered Forest']);
@@ -332,7 +337,7 @@ function cardModal(name, deck) {
         <p class="muted small">${esc(c?.type_line || '')} ${c ? manaHtml(c.mana_cost) : ''}</p>
         <p class="oracle">${esc(c?.oracle_text || '')}</p>
         ${c?.id ? '<p class="small" style="margin:.2rem 0"><a href="#" id="rulGo">Regelfrågor och förtydliganden</a></p><div id="rulBox" class="small"></div>' : ''}
-        <p class="small">Commander: <b>${esc(c?.legalities.commander || '?')}</b> · Modern: <b>${esc(c?.legalities.modern || '?')}</b> · värde ca ${krE(c?.eur)} <span class="muted">(${eur(c?.eur)})</span>
+        <p class="small">Commander: <b>${esc(c?.legalities.commander || '?')}</b> · Modern: <b>${esc(c?.legalities.modern || '?')}</b> · värde ca ${krE(c?.eur)} <span class="muted">(Cardmarket ${eur(c?.eur)})</span>
           ${c?.game_changer ? ' · <span class="pill warn" title="Kortet finns på Wizards lista över game changers och påverkar lekens bracket">game changer</span>' : ''}</p>
         <div class="row small">
           <label class="own">Jag äger <input type="number" min="0" max="999" value="${S.collection[name] || 0}" id="ownQty" style="width:5rem"> ex</label>
@@ -486,7 +491,7 @@ function viewDecks() {
       <div class="body"><b>${esc(d.name)}</b>${d.public ? ' <span class="pill" title="Syns för andra under Utforska">publik</span>' : ''}
         <div class="row small" style="margin-top:.3rem"><span class="pill">${FORMAT_SV[d.format]}</span><span class="pill">${deckTotal(d)} kort</span>
         ${d.built ? '<span class="pill good" title="Korten sitter i leken">byggd</span>' : ''}<span class="pill ${miss ? 'warn' : 'good'}">${miss ? `saknar ${miss}` : 'komplett'}</span>${rec.n ? `<span class="pill" title="Vinster i spelloggen">${rec.win}/${rec.n} vinster</span>` : ''}
-        <span class="pill" title="Ungefärligt värde enligt Cardmarket-trend">${krE(deckValue(d))}</span></div>
+        <span class="pill" title="Värde: ${priceWhat()}">${krE(deckValue(d))}</span></div>
         <div class="ownbar" title="Du äger ${Math.round(share * 100)} % av korten"><div style="width:${share * 100}%"></div></div>
         <div class="muted small">Du äger ${Math.round(share * 100)} %</div></div></a>`;
   }).join('');
@@ -819,7 +824,7 @@ function tabStats(deck, tab) {
       <div class="stat"><b>${total}</b><span>kort i leken</span></div>
       <div class="stat"><b>${lands}</b><span>länder</span></div>
       <div class="stat"><b>${cmcN ? (cmcSum / cmcN).toFixed(2) : '–'}</b><span>snitt-manavärde</span></div>
-      <div class="stat"><b>${krE(value)}</b><span>ungefärligt värde (${eur(value)})</span></div>
+      <div class="stat"><b>${krE(value)}</b><span>ungefärligt värde (Cardmarket ${eur(value)})</span></div>
       <div class="stat"><b>${krE(missVal)}</b><span>för det du saknar</span></div>
       ${(r => r.n ? `<div class="stat"><b>${r.pct} %</b><span>vinster (${r.win} av ${r.n} matcher)</span></div>` : '')(deckRecord(S.games.filter(g => g.deck_id === deck.id)))}
     </div>
@@ -834,7 +839,7 @@ function tabStats(deck, tab) {
       <div class="card"><h2>Roller <span class="muted small">(gissning från korttexten)</span></h2>${hbars(roleCount)}
         ${deck.format === 'commander' ? '<p class="muted small">Tumregel för Commander: ca 36–38 länder, 10 ramp, 10 kortdragning, 8–10 removal och 2–3 massborttagningar.</p>' : ''}</div>
     </div>
-    <p class="muted small">Värdet bygger på Scryfalls Cardmarket-trendpris i euro, omräknat med dagens kurs (1 € = ${S.rate.toLocaleString('sv-SE')} kr). Det är en fingervisning. Butikspriser finns under Köpa.</p>`;
+    <p class="muted small">Värdet är ${priceWhat()}, omräknat med dagens kurs (1 € = ${S.rate.toLocaleString('sv-SE')} kr). Det är en fingervisning. Riktiga butikspriser finns under Köpa. Prisnivån ändras under Inställningar.</p>`;
   hookTips(tab);
 }
 
@@ -1092,7 +1097,7 @@ function tabBuy(deck, tab) {
   const sel = tabBuy.sel || (tabBuy.sel = new Set());
   let budget = 0;
   try { budget = +JSON.parse(localStorage.getItem('lv-budget') || '{}')[deck.id] || 0; } catch {}
-  const priceOf = n => pickOffer(S.alara[n])?.price ?? (S.cards[n]?.eur != null ? S.cards[n].eur * S.rate : null);
+  const priceOf = n => pickOffer(S.alara[n])?.price ?? (S.cards[n]?.eur != null ? sek(S.cards[n].eur) : null);
   const plan = budget ? budgetPlan(deck, miss, budget, priceOf) : null;
   tab.innerHTML = miss.length ? `
     <div class="grid cols-2">
@@ -1113,7 +1118,7 @@ function tabBuy(deck, tab) {
                   ${r.offers.length > 1 ? `<details class="small"><summary class="muted">${r.offers.length - 1} till</summary>${r.offers.slice(1).map(x => `<div><a href="${esc(x.url)}" target="_blank" rel="noopener">${kr(x.price)}</a> ${esc(x.condition)} – <span class="muted">${esc(x.title)}</span></div>`).join('')}</details>` : ''}</div>`
               : '<span class="pill warn">ej i lager</span>';
             const fr = offers[m.name.toLowerCase()] || [];
-            return `<tr data-name="${esc(m.name)}"><td><input type="checkbox" data-sel ${sel.has(m.name) ? 'checked' : ''}></td><td><span data-img="${esc(info?.image || '')}">${esc(m.name)}</span><div class="muted small">ca ${eur(info?.eur)}${inBuilt[m.name] ? ` · du har kortet i ${esc(inBuilt[m.name])}` : ''}</div></td>
+            return `<tr data-name="${esc(m.name)}"><td><input type="checkbox" data-sel ${sel.has(m.name) ? 'checked' : ''}></td><td><span data-img="${esc(info?.image || '')}">${esc(m.name)}</span><div class="muted small">ca ${krE(info?.eur)}${inBuilt[m.name] ? ` · du har kortet i ${esc(inBuilt[m.name])}` : ''}</div></td>
               <td class="num">${m.missing}</td><td>${cell}</td>${S.cloud ? `<td class="small">${fr.map(t => `<div title="Till byte">⇄ ${esc(t.ownerName)} har ${t.qty}</div>`).join('') || '<span class="muted">–</span>'}</td>` : ''}<td><div class="links">${buyLinks(m.name).replace(/<a href="https:\/\/www\.alaragames[^>]*>Alara<\/a>/, '')}</div></td>
               <td><button class="btn small" data-got title="Jag har köpt/fått kortet">Har ✓</button></td></tr>`;
           }).join('')}</tbody></table></div>
@@ -1131,7 +1136,7 @@ function tabBuy(deck, tab) {
             <ul class="small" style="margin:.2rem 0;padding-left:1.1rem">${plan.picks.map(x => `<li>${esc(x.name)} <span class="muted">${kr(x.price)}</span></li>`).join('')}</ul>
             ${plan.noPrice ? `<p class="small warn">${plan.noPrice} kort saknar pris.</p>` : ''}
             ${plan.picks.length ? '<button class="btn small" id="bgSel">Markera dessa</button>' : ''}` : ''}
-          <p class="muted small">Befälhavaren och det leken har för lite av kommer först. Alarapriset används om det finns, annars Cardmarket-trend utan frakt.</p></div>
+          <p class="muted small">Befälhavaren och det leken har för lite av kommer först. Alarapriset används om det finns, annars ${priceWhat()}.</p></div>
         <div class="card"><h2>Önskelista för Cardmarket</h2>
           <p class="small muted">${checked ? 'Korten som Alara inte har i lager.' : 'Alla kort du saknar.'}</p>
           <textarea id="wants" readonly style="min-height:160px">${esc(wants)}</textarea>
@@ -1394,11 +1399,18 @@ function viewSettings() {
     ${window.matchMedia?.('(display-mode: standalone)').matches ? '<p class="small good">Lekverkstan körs redan som installerad app.</p>'
       : installEvt ? '<p class="small muted">Lägg Lekverkstan på hemskärmen. Den startar då som en vanlig app och lekarna går att titta på utan nät.</p><button class="btn primary" id="install">Installera</button>'
       : '<p class="small muted">På iPhone: tryck på Dela-knappen i Safari och välj <b>Lägg till på hemskärmen</b>. På Android: öppna menyn i Chrome och välj <b>Installera app</b> eller <b>Lägg till på startskärmen</b>.</p>'}
-    <h3>Om priser</h3>
-    <p class="small muted">Värden i kronor räknas om från Scryfalls europriser med dagens kurs, 1 € = ${S.rate.toLocaleString('sv-SE')} kr.</p>
+    <h3>Priser</h3>
+    <div class="seg" id="priceSeg" role="group" aria-label="Prisnivå">${[['butik', 'Svensk butik'], ['cm', 'Cardmarket']].map(([k, l]) => `<button data-price-set="${k}" class="${S.priceLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <p class="small muted">Priserna kommer från Cardmarket via Scryfall och gäller billigaste utgåvan, eller den utgåva du angett i samlingen. De räknas om till kronor med dagens kurs, 1 € = ${S.rate.toLocaleString('sv-SE')} kr.
+      <b>Svensk butik</b> lägger på 30 %, ungefär vad Alara tar mer för samma utgåva. <b>Cardmarket</b> visar vad korten kostar där, utan frakt. Priserna hämtas om var tredje dag.</p>
     <p class="small muted">Alara-priser hämtas från butikens öppna sidor, cachas i 6 timmar och visar bara varianter som finns i lager. Cardmarket har inget öppet API för privatpersoner, därför används en önskelista plus deras egen Shopping Wizard.</p>
   </div>`;
   $('#themeSeg').onclick = e => { const b = e.target.closest('[data-theme-set]'); if (b) { setTheme(b.dataset.themeSet); render(); } };
+  $('#priceSeg').onclick = e => {
+    const b = e.target.closest('[data-price-set]'); if (!b) return;
+    S.priceLevel = b.dataset.priceSet; try { localStorage.setItem('lv-price', S.priceLevel); } catch {}
+    render();
+  };
   if ($('#install')) $('#install').onclick = async () => { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; render(); };
   if ($('#saveName')) $('#saveName').onclick = async () => {
     const name = $('#dispName').value.trim();
@@ -1501,7 +1513,7 @@ function viewExplore(sub) {
   ex.innerHTML = `<div class="card">
     <div class="row"><label class="small"><input type="checkbox" id="onlyNeed" ${opt.onlyNeed ? 'checked' : ''}> Bara kort som saknas i mina lekar</label>
       <span class="spacer"></span><input type="search" id="tq" placeholder="Sök kort…" value="${esc(opt.q)}" style="width:200px"></div>
-    ${rows.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>Har till byte</th><th class="num">Antal</th><th class="num" title="Billigaste utgåvan enligt Cardmarket-trend">Pris ca</th><th>Behövs i</th>${S.v4 ? '<th></th>' : ''}</tr></thead><tbody>
+    ${rows.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>Har till byte</th><th class="num">Antal</th><th class="num" title="${priceWhat()}">Pris ca</th><th>Behövs i</th>${S.v4 ? '<th></th>' : ''}</tr></thead><tbody>
       ${rows.map((t, i) => {
         const foil = (t.prints || []).filter(p => p.foil), b = S.v4 && myBooking(t);
         return `<tr><td><span data-img="${esc(S.cards[t.name]?.image || scryImg(t.name))}">${esc(t.name)}</span>${foil.length ? ` <span class="foil" title="Har foil: ${esc(foil.map(printLabel).join(', '))}">✦</span>` : ''}</td><td>${esc(t.ownerName)}</td><td class="num">${t.qty}</td>
@@ -1746,7 +1758,7 @@ function viewWishlist() {
       <div class="card">
         <div class="row" style="margin-bottom:.6rem"><div class="add-bar" id="wAdd"></div></div>
         ${list.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th class="num">Antal</th><th class="num" title="Larma när priset hos Alara är högst så här mycket">Maxpris</th><th>Alara</th><th>Kollad</th><th></th></tr></thead><tbody>
-        ${list.map(w => `<tr data-name="${esc(w.name)}" class="${w.alert ? 'alert' : ''}"><td>${w.alert ? '<span class="badge">Nytt</span> ' : ''}<span data-img="${esc(S.cards[w.name]?.image || scryImg(w.name))}">${esc(w.name)}</span><div class="muted small">trend ca ${krE(S.cards[w.name]?.eur)}</div></td>
+        ${list.map(w => `<tr data-name="${esc(w.name)}" class="${w.alert ? 'alert' : ''}"><td>${w.alert ? '<span class="badge">Nytt</span> ' : ''}<span data-img="${esc(S.cards[w.name]?.image || scryImg(w.name))}">${esc(w.name)}</span><div class="muted small">ca ${krE(S.cards[w.name]?.eur)}</div></td>
           <td class="num"><input type="number" min="1" max="99" value="${w.qty}" style="width:4rem" data-wq></td>
           <td class="num"><input type="number" min="0" step="1" value="${w.max_price ?? ''}" placeholder="kr" style="width:5.5rem" data-wp></td>
           <td>${w.in_stock == null ? '<span class="muted small">ej kollat</span>' : w.in_stock ? `<a href="${esc(bestOffer(S.alara[w.name])?.url || `https://www.alaragames.se/search?q=${encodeURIComponent(w.name)}`)}" target="_blank" rel="noopener"><b>${kr(w.last_price)}</b></a>${w.max_price != null && w.last_price <= w.max_price ? ' <span class="pill good">under maxpris</span>' : ''}` : '<span class="pill warn">ej i lager</span>'}</td>

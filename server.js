@@ -81,7 +81,7 @@ function slimCard(c) {
     any_number: /A deck can have any number of cards named/i.test(c.oracle_text || ''),
     commander_ok: /Legendary.*Creature/i.test(c.type_line || '') || /can be your commander/i.test(c.oracle_text || ''),
     game_changer: !!c.game_changer,
-    v: 3,
+    v: 3, at: Date.now(),
   };
 }
 // en utgåva av ett kort, för val av utgåva och foil i samlingen
@@ -101,27 +101,32 @@ function remember(s) {
 // v3: billigaste utgåvan (prefer:eur-low), så att dyra specialutgåvor inte blåser upp värdet
 async function lookupCards(names, fresh) {
   const want = [...new Set(names.map(n => n.trim()).filter(Boolean))];
-  const missing = want.filter(n => fresh || cardCache[n.toLowerCase()]?.v !== 3);
+  const missing = want.filter(n => fresh || cardCache[n.toLowerCase()]?.v !== 3 || Date.now() - (cardCache[n.toLowerCase()].at || 0) > 3 * 24 * 3600e3);
   const notFound = [];
   let rest = [];
-  for (let i = 0; i < missing.length; i += 25) {
-    const part = missing.slice(i, i + 25);
-    const q = '(' + part.map(n => '!"' + n.replace(/"/g, '') + '"').join(' or ') + ') prefer:eur-low';
-    const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/search?q=' + encodeURIComponent(q)));
-    const got = new Set();
-    if (status !== 404) for (const c of body.data || []) {
-      const hit = part.find(n => n.toLowerCase() === c.name.toLowerCase() || n.toLowerCase() === c.name.split(' // ')[0].toLowerCase());
-      if (hit) { remember(slimCard(c)); got.add(hit); }
+  // gamla priser hämtas om; går Scryfall inte att nå används de sparade
+  try {
+    for (let i = 0; i < missing.length; i += 25) {
+      const part = missing.slice(i, i + 25);
+      const q = '(' + part.map(n => '!"' + n.replace(/"/g, '') + '"').join(' or ') + ') prefer:eur-low';
+      const { status, body } = await scryQ(() => getJson('https://api.scryfall.com/cards/search?q=' + encodeURIComponent(q)));
+      const got = new Set();
+      if (status !== 404) for (const c of body.data || []) {
+        const hit = part.find(n => n.toLowerCase() === c.name.toLowerCase() || n.toLowerCase() === c.name.split(' // ')[0].toLowerCase());
+        if (hit) { remember(slimCard(c)); got.add(hit); }
+      }
+      rest.push(...part.filter(n => !got.has(n)));
     }
-    rest.push(...part.filter(n => !got.has(n)));
-  }
-  for (let i = 0; i < rest.length; i += 75) {
-    const ids = rest.slice(i, i + 75).map(name => ({ name }));
-    const { body } = await scryQ(() => getJson('https://api.scryfall.com/cards/collection', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiers: ids }),
-    }));
-    for (const c of body.data || []) remember(slimCard(c));
-    for (const nf of body.not_found || []) notFound.push(nf.name);
+    for (let i = 0; i < rest.length; i += 75) {
+      const ids = rest.slice(i, i + 75).map(name => ({ name }));
+      const { body } = await scryQ(() => getJson('https://api.scryfall.com/cards/collection', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiers: ids }),
+      }));
+      for (const c of body.data || []) remember(slimCard(c));
+      for (const nf of body.not_found || []) notFound.push(nf.name);
+    }
+  } catch (e) {
+    if (!want.every(n => cardCache[n.toLowerCase()])) throw e;
   }
   if (missing.length) save('cardcache.json', cardCache);
   const cards = {};
