@@ -339,3 +339,14 @@ body.life-on main { max-width: none; padding: 0; }
 .wbar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; min-width: 40px; }
 .wbar > div { height: 100%; background: #2e9d5b; }
 tr.few { opacity: .55; }
+
+/* förbättra */
+.gap { border-top: 1px solid var(--border); padding: .45rem 0; }
+.gap:first-of-type { border-top: 0; }
+.gap .row { gap: .4rem; }
+/* provspela */
+.board { display: flex; flex-wrap: wrap; gap: .3rem; }
+.board figure { margin: 0; width: 64px; }
+.board figure img { width: 100%; border-radius: 4px; display: block; }
+.board figure.tapped img { transform: rotate(90deg) scale(.8); opacity: .7; }
+.board .noimg { font-size: .65rem; border: 1px solid var(--border); border-radius: 4px; padding: .2rem; min-height: 88px; }

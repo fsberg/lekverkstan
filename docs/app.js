@@ -574,7 +574,7 @@ function viewDeck(id) {
     ensureCards(missingInfo).catch(e => toast(e.message)).finally(() => { viewDeck.loading = false; render(); });
   }
   const commander = deck.format === 'commander';
-  const tabs = [['lista', 'Lista'], ['sok', 'Hitta kort'], ...(commander ? [['forslag', 'Förslag']] : []), ['kop', 'Köpa'], ['statistik', 'Statistik'], ['provhand', 'Provhand'],
+  const tabs = [['lista', 'Lista'], ['sok', 'Hitta kort'], ...(commander ? [['forslag', 'Förslag']] : []), ['forbattra', 'Förbättra'], ['kop', 'Köpa'], ['statistik', 'Statistik'], ['provhand', 'Provhand'],
     ...(commander ? [['kombos', 'Kombos']] : []), ['versioner', 'Versioner'], ['text', 'Import/Export']];
   if (!tabs.some(t => t[0] === S.tab)) S.tab = 'lista';
   $('#app').innerHTML = `
@@ -615,7 +615,7 @@ function viewDeck(id) {
     S.tab = b.dataset.next; render();
   });
   const tab = $('#tab');
-  ({ lista: tabList, statistik: tabStats, provhand: tabHand, kop: tabBuy, sok: tabSearch, forslag: tabSuggest, kombos: tabCombos, versioner: tabVersions, text: tabText })[S.tab](deck, tab);
+  ({ lista: tabList, statistik: tabStats, provhand: tabHand, forbattra: tabImprove, kop: tabBuy, sok: tabSearch, forslag: tabSuggest, kombos: tabCombos, versioner: tabVersions, text: tabText })[S.tab](deck, tab);
 }
 
 // --- Lista ---
@@ -931,8 +931,11 @@ function tabHand(deck, tab) {
           <p class="muted small">Räknat på att du går först och drar ett kort per tur från tur 2. Mana från artefakter räknas inte.</p>
         </div>
       </div>
-    </div>`;
+    </div>
+    <div class="grid cols-2" style="margin-top:1rem"><div class="card" id="gold"></div><div class="card" id="sim" style="align-self:start"></div></div>`;
   if (N < 7) return;
+  goldPlay(deck, st, $('#gold'));
+  simCard(deck, $('#sim'));
   $('#hNew').onclick = () => { fresh(0); render(); };
   $('#hMull').onclick = () => { fresh(Math.min(6, st.mull + 1)); render(); };
   $('#hDraw').onclick = () => { if (st.lib.length) { st.hand.push(st.lib.shift()); st.drawn++; } render(); };
@@ -940,6 +943,274 @@ function tabHand(deck, tab) {
     const f = e.target.closest('figure[data-i]'); if (!f || !st.bottom) return;
     st.lib.push(...st.hand.splice(+f.dataset.i, 1)); st.bottom--; render();
   });
+}
+
+// --- Förbättra: svagheter och uppgraderingsplan ---
+// Varje kontroll räknar kort i leken. Roller går via rolesOf (kan ändras per kort), resten via korttexten.
+const GAPS = [
+  { k: 'land', label: 'Länder', land: true, min: { commander: 35, modern: 19 }, max: { commander: 39, modern: 25 }, why: 'För få länder ger händer som kör fast, för många gör att du får slut på saker att göra.', q: 't:land -t:basic' },
+  { k: 'ramp', label: 'Ramp', role: 'Ramp', min: { commander: 9 }, why: 'Ramp gör att du hinner spela befälhavaren och de dyra korten i tid.', q: 'otag:ramp' },
+  { k: 'draw', label: 'Kortdragning', role: 'Kortdragning', min: { commander: 9 }, why: 'Utan kortdragning tar korten på handen slut efter några turer.', q: 'otag:draw' },
+  { k: 'removal', label: 'Removal', role: 'Removal', min: { commander: 8, modern: 6 }, why: 'Riktad removal tar hand om det farligaste motståndarna spelar.', q: 'otag:removal' },
+  { k: 'wipe', label: 'Massborttagning', role: 'Massborttagning', min: { commander: 2 }, why: 'Ett sätt att nollställa bordet när någon drar ifrån.', q: 'otag:board-wipe' },
+  { k: 'artench', label: 'Svar på artefakter och förtrollningar', side: true, re: /(destroy|exile) (target|each|all|up to \w+ target) [^.]*?\b(artifacts?|enchantments?|nonland permanents?|permanents?)\b/i, min: { commander: 3, modern: 2 }, why: 'Utan dem blir motståndarnas Sol Ring, Rhystic Study och liknande liggande kvar.', q: '(otag:removal-artifact or otag:removal-enchantment)' },
+  { k: 'gy', label: 'Kyrkogårdshat', side: true, re: /exile (all cards from |each opponent's |target player's |all |)graveyards?|exile (up to \w+ )?target cards? from (a|an opponent's|any) graveyard|cards in graveyards can't|graveyard, exile it instead/i, min: { commander: 1, modern: 2 }, why: 'Behövs mot lekar som återupplivar varelser eller spelar kort från kyrkogården.', q: 'otag:graveyard-hate' },
+  { k: 'prot', label: 'Skydd för dina kort', re: /hexproof|indestructible|phases? out|protection from|shroud|counter target (spell|noncreature spell)/i, min: { commander: 2 }, why: 'Skyddar befälhavaren mot removal, så att du slipper betala skatt gång på gång.', q: 'otag:protects-creature' },
+  { k: 'recur', label: 'Återvinning', re: /return (target|up to \w+ target|a|another target|all) [^.]*?from your graveyard to (your hand|the battlefield)/i, min: { commander: 2 }, why: 'Ger tillbaka viktiga kort som förstörts.', q: 'otag:recursion' },
+  { k: 'inst', label: 'Svar på andras tur', test: (c, roles) => roles.some(r => r === 'Removal' || r === 'Massborttagning') && (/Instant/.test(c.type_line || '') || /\bFlash\b/.test(c.oracle_text || '')), min: { commander: 4, modern: 4 }, why: 'Removal som instant eller med flash kan användas när hotet dyker upp, inte bara på din egen tur.', q: 'otag:removal (t:instant or o:flash)' },
+  { k: 'fly', label: 'Blockerare mot flygare', test: c => /Creature/.test(c.type_line || '') && /\b(Flying|Reach)\b/.test(c.oracle_text || ''), min: { commander: 4 }, why: 'Utan varelser med flying eller reach kommer motståndarnas flygare fritt, om du inte har gott om removal.', q: 't:creature (keyword:flying or keyword:reach)' },
+];
+function gapMatch(g, c, info) {
+  if (!info) return false;
+  const land = mainType(info) === 'Land';
+  if (g.land) return c.cat ? c.cat === 'Länder' : land;
+  if (land) return false;
+  const roles = rolesOf(c);
+  return g.role ? roles.includes(g.role) : g.re ? g.re.test(info.oracle_text || '') : g.test(info, roles);
+}
+function deckIdent(deck) {
+  const cmd = deck.cards.filter(c => c.board === 'commander');
+  if (cmd.length) return new Set(cmd.flatMap(c => S.cards[c.name]?.color_identity || []));
+  if (deck.format === 'commander') return null;
+  const s = new Set(deck.cards.filter(c => c.board !== 'maybe').flatMap(c => S.cards[c.name]?.color_identity || []));
+  return s.size ? s : null;
+}
+function deckGaps(deck) {
+  const fmt = deck.format === 'modern' ? 'modern' : 'commander';
+  const main = deck.cards.filter(c => c.board === 'main' || c.board === 'commander'), side = deck.cards.filter(c => c.board === 'side');
+  const out = [];
+  for (const g of GAPS) {
+    const min = g.min[fmt]; if (!min) continue;
+    const hits = (g.side ? [...main, ...side] : main).filter(c => gapMatch(g, c, S.cards[c.name]));
+    const n = hits.reduce((a, c) => a + c.qty, 0), max = g.max?.[fmt];
+    out.push({ ...g, n, min, max, over: !!max && n > max, hits: [...new Set(hits.map(c => c.name))], state: n >= min && !(max && n > max) ? 'ok' : n === 0 || n < min / 2 ? 'bad' : 'warn' });
+  }
+  const nl = main.filter(c => c.board === 'main' && S.cards[c.name] && mainType(S.cards[c.name]) !== 'Land');
+  const q = nl.reduce((a, c) => a + c.qty, 0), avg = q ? nl.reduce((a, c) => a + (S.cards[c.name].cmc || 0) * c.qty, 0) / q : 0, lim = fmt === 'modern' ? 2.8 : 3.5;
+  if (q) out.push({ k: 'curve', label: 'Manakurva', disp: avg.toFixed(2).replace('.', ','), range: `snitt högst ${String(lim).replace('.', ',')}`, state: avg <= lim ? 'ok' : avg <= lim + .5 ? 'warn' : 'bad', why: 'Leken är tung. Byt några dyra kort mot billigare, eller lägg in mer ramp, så kommer du igång snabbare.', hits: [], over: true });
+  return out;
+}
+// lediga kort i samlingen som fyller luckan och passar leken
+function gapOwned(deck, g) {
+  const fmt = deck.format === 'modern' ? 'modern' : 'commander', ident = deckIdent(deck);
+  const inDeck = new Set(deck.cards.map(c => c.name));
+  return Object.keys(S.collection).filter(n => !inDeck.has(n) && !BASICS.has(n) && free(n, deck) > 0).filter(n => {
+    const c = S.cards[n];
+    return c && c.legalities?.[fmt] === 'legal' && (!ident || (c.color_identity || []).every(x => ident.has(x))) && gapMatch(g, { name: n }, c);
+  }).sort((a, b) => (S.cards[a].cmc || 0) - (S.cards[b].cmc || 0)).slice(0, 6);
+}
+// byten som ger mest för pengarna: EDHREC-kort som saknas mot de minst spelade korten i samma roll eller typ
+function upgradePlan(deck, data, budget) {
+  const edh = {}, proper = {};
+  for (const l of data.lists) for (const c of l.cards) { const k = c.name.toLowerCase(); proper[k] = c.name; if (c.incl != null && !(edh[k] >= c.incl)) edh[k] = c.incl; }
+  const score = n => edh[n.toLowerCase()] ?? 0;
+  const inDeck = new Set(deck.cards.map(c => c.name.toLowerCase()));
+  const pool = deck.cards.filter(c => c.board === 'main' && S.cards[c.name] && mainType(S.cards[c.name]) !== 'Land' && !BASICS.has(c.name))
+    .map(c => ({ name: c.name, s: score(c.name), roles: rolesOf(c), type: mainType(S.cards[c.name]) }));
+  const cands = Object.keys(edh).filter(k => !inDeck.has(k)).map(k => proper[k]).filter(n => {
+    const c = S.cards[n]; return c && mainType(c) !== 'Land' && c.legalities?.commander === 'legal' && (c.eur != null || free(n, deck) > 0);
+  }).sort((a, b) => score(b) - score(a)).slice(0, 80);
+  const used = new Set(), pairs = [];
+  for (const n of cands) {
+    const roles = rolesOf({ name: n }), type = mainType(S.cards[n]), left = pool.filter(p => !used.has(p.name));
+    // ett kort med en roll (ramp, removal …) byts bara mot ett kort med samma roll
+    const same = roles.length ? left.filter(p => p.roles.some(r => roles.includes(r))) : [];
+    const base = same.length ? same : left.filter(p => !p.roles.length), typed = base.filter(p => p.type === type);
+    const opts = typed.length ? typed : base;
+    const cut = opts.sort((a, b) => a.s - b.s)[0];
+    if (!cut || score(n) - cut.s < .08) continue;
+    used.add(cut.name);
+    const own = free(n, deck) > 0;
+    pairs.push({ out: cut.name, outS: cut.s, in: n, inS: score(n), gain: score(n) - cut.s, own, eur: own ? 0 : S.cards[n].eur, why: same.length ? roles.filter(r => cut.roles.includes(r))[0] : '' });
+  }
+  pairs.sort((a, b) => b.own - a.own || b.gain / (sek(b.eur) + 10) - a.gain / (sek(a.eur) + 10));
+  const picks = []; let cost = 0;
+  for (const p of pairs) { if (picks.length >= 15) break; if (cost + sek(p.eur) > budget) continue; picks.push(p); cost += sek(p.eur); }
+  return { picks, cost, more: pairs.length - picks.length };
+}
+async function drawPlan(deck, el) {
+  const head = '<h2>Uppgraderingsplan</h2>';
+  const cmd = deck.cards.filter(c => c.board === 'commander').map(c => c.name);
+  if (!cmd.length) { el.innerHTML = head + '<p class="muted small">Välj en befälhavare först (★ på ett kort i listan).</p>'; return; }
+  const data = await edhrecFor(cmd).catch(() => null);
+  if (!el.isConnected) return;
+  if (!data) { el.innerHTML = head + '<p class="muted small">EDHREC har ingen sida för den här befälhavaren än.</p>'; return; }
+  const need = [...new Set(data.lists.flatMap(l => l.cards.map(c => c.name)))].filter(n => !S.cards[n] && !S.notFound.has(n));
+  if (need.length) { el.innerHTML = head + '<p class="muted">Hämtar priser…</p>'; await ensureCards(need).catch(() => {}); if (!el.isConnected) return; }
+  let budget = 200; try { const v = JSON.parse(localStorage.getItem('lv-upbudget') || '{}')[deck.id]; if (v != null) budget = +v; } catch {}
+  const plan = upgradePlan(deck, data, budget);
+  const sel = drawPlan.sel?.deck === deck.id && drawPlan.sel.sig === plan.picks.map(p => p.in).join() ? drawPlan.sel.set : new Set(plan.picks.map((_, i) => i));
+  drawPlan.sel = { deck: deck.id, sig: plan.picks.map(p => p.in).join(), set: sel };
+  const pct = v => Math.round(v * 100) + ' %';
+  el.innerHTML = `${head}
+    <label class="small row">Jag vill lägga högst <input type="number" id="upBudget" min="0" max="100000" step="50" value="${budget}" style="width:6rem"> kr</label>
+    ${plan.picks.length ? `<p class="small">${plan.picks.length} byten för ca <b>${Math.round(plan.cost).toLocaleString('sv-SE')} kr</b>${plan.picks.some(p => p.own) ? `, varav ${plan.picks.filter(p => p.own).length} med kort du redan har` : ''}.${plan.more ? ` ${plan.more} byten till ryms inte i budgeten.` : ''}</p>
+    <div class="table-scroll"><table class="small"><thead><tr><th></th><th>Ta ut</th><th>Lägg in</th><th class="num">Vinst</th><th class="num">Kostar</th></tr></thead><tbody>
+    ${plan.picks.map((p, i) => `<tr><td><input type="checkbox" data-us="${i}" ${sel.has(i) ? 'checked' : ''}></td>
+      <td><span data-img="${esc(S.cards[p.out]?.image || '')}">${esc(p.out)}</span><div class="muted">${pct(p.outS)}</div></td>
+      <td><span data-img="${esc(S.cards[p.in]?.image || '')}"><b>${esc(p.in)}</b></span><div class="muted">${pct(p.inS)}${p.why ? ' · ' + esc(p.why.toLowerCase()) : ''}</div></td>
+      <td class="num good">+${Math.round(p.gain * 100)}</td><td class="num">${p.own ? '<span class="pill good">har</span>' : krE(p.eur)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="row" style="margin-top:.6rem"><button class="btn primary small" id="upDo" ${sel.size ? '' : 'disabled'}>Gör ${sel.size} valda byten</button>${S.v3 ? `<button class="btn small" id="upWish" ${[...sel].some(i => !plan.picks[i]?.own) ? '' : 'disabled'}>♡ Valda till önskelistan</button>` : ''}</div>`
+      : '<p class="muted small">Hittade inga byten som gör tydlig skillnad inom budgeten. Leken ligger nära det EDHREC föreslår, eller så behövs en högre budget.</p>'}
+    <p class="muted small">Procenten är hur stor andel av lekarna med ${esc(cmd.join(' + '))} på EDHREC som spelar kortet. Kort som inte finns bland EDHRECs förslag räknas som 0 %, även om de kan vara bra just i din lek. Byten görs inom samma roll när det går. Länder byts inte. Den gamla listan sparas under Versioner.</p>`;
+  $('#upBudget', el).onchange = e => {
+    try { const all = JSON.parse(localStorage.getItem('lv-upbudget') || '{}'); all[deck.id] = Math.max(0, +e.target.value || 0); localStorage.setItem('lv-upbudget', JSON.stringify(all)); } catch {}
+    drawPlan.sel = null; drawPlan(deck, el);
+  };
+  el.onchange = e => { const c = e.target.closest('[data-us]'); if (!c) return; if (c.checked) sel.add(+c.dataset.us); else sel.delete(+c.dataset.us); drawPlan(deck, el); };
+  if ($('#upDo', el)) $('#upDo', el).onclick = () => {
+    const chosen = [...sel].map(i => plan.picks[i]).filter(Boolean);
+    if (!chosen.length) return;
+    saveVersion(deck, 'Före uppgradering');
+    for (const p of chosen) { const x = deck.cards.find(c => c.name === p.out && c.board === 'main'); if (x) { x.name = p.in; delete x.cat; } }
+    drawPlan.sel = null; saveDeckSoon(deck); render();
+    toast(`${chosen.length} kort bytta. Den gamla listan finns under Versioner.`, 4000);
+  };
+  if ($('#upWish', el)) $('#upWish', el).onclick = async () => {
+    const chosen = [...sel].map(i => plan.picks[i]).filter(p => p && !p.own);
+    for (const p of chosen) await addToWishlist(p.in, 1, true);
+    toast(`${chosen.length} kort på önskelistan`);
+  };
+}
+function tabImprove(deck, tab) {
+  const unknown = Object.keys(S.collection).filter(n => !S.cards[n] && !S.notFound.has(n));
+  if (unknown.length && !tabImprove.loading) { tabImprove.loading = true; ensureCards(unknown).catch(() => {}).finally(() => { tabImprove.loading = false; if (S.tab === 'forbattra' && tab.isConnected) render(); }); }
+  const gaps = deckGaps(deck), icon = { ok: '✅', warn: '⚠️', bad: '❌' };
+  const bad = gaps.filter(g => g.state !== 'ok').length;
+  tab.innerHTML = `<div class="grid cols-2">
+    <div class="card"><h2>Svagheter</h2>
+      <p class="small">${bad ? `<b>${bad}</b> saker att titta på.` : '<span class="good">Leken täcker det mesta.</span>'} <span class="muted">Siffrorna är tumregler för ${deck.format === 'modern' ? 'Modern (sidoleken räknas för svar på artefakter och kyrkogårdar)' : 'Commander'}, och korten känns igen på regeltexten. Ändra rollen på ett kort i kortrutan om gissningen blir fel.</span></p>
+      ${gaps.map(g => {
+        const own = g.state !== 'ok' && !g.over ? gapOwned(deck, g) : [];
+        return `<div class="gap ${g.state}"><div class="row"><span>${icon[g.state]}</span><b>${esc(g.label)}</b><span class="spacer"></span><span class="small">${g.disp || g.n + ' st'} <span class="muted">(${g.range || (g.max ? g.min + '–' + g.max : 'minst ' + g.min)})</span></span></div>
+        ${g.state !== 'ok' ? `<p class="small muted" style="margin:.2rem 0">${g.over && g.k === 'land' ? 'Många länder. Byt några mot ramp eller kortdragning.' : esc(g.why)}</p>
+          ${own.length ? `<div class="row small" style="flex-wrap:wrap;gap:.3rem">Lediga i samlingen: ${own.map(n => `<button class="btn small" data-gadd="${esc(n)}" title="Lägg till i leken"><span data-img="${esc(S.cards[n]?.image || '')}">+ ${esc(n)}</span></button>`).join('')}</div>` : ''}
+          ${g.q && !g.over ? `<button class="btn small" data-gq="${esc(g.q)}" style="margin-top:.3rem">Sök fler</button>` : ''}` : ''}
+        ${g.hits.length ? `<details class="small"><summary class="muted">Visa vilka</summary>${g.hits.map(esc).join(', ')}</details>` : ''}</div>`;
+      }).join('')}
+    </div>
+    <div class="card" id="upPlan"><h2>Uppgraderingsplan</h2>${deck.format === 'commander' ? '<p class="muted">Hämtar från EDHREC…</p>' : '<p class="muted small">Planen bygger på EDHREC och finns bara för Commander-lekar.</p>'}</div>
+  </div>`;
+  tab.addEventListener('click', async e => {
+    const a = e.target.closest('[data-gadd]'); if (a) { await addToDeck(deck, a.dataset.gadd); return; }
+    const q = e.target.closest('[data-gq]'); if (q) { tabSearch.last = q.dataset.gq; S.tab = 'sok'; render(); }
+  });
+  if (deck.format === 'commander') drawPlan(deck, $('#upPlan', tab));
+}
+
+// --- Provspela: spela själv och räkna på 1 000 matcher utan motståndare ---
+function manaOf(c) {
+  if (!c) return 0;
+  if (mainType(c) === 'Land') return 1;
+  if (!/Artifact|Creature|Enchantment/.test(c.type_line || '')) return 0;
+  const t = c.oracle_text || '', m = t.match(/add ((?:\{[^}]+\})+)/i);
+  if (m) return Math.min(3, m[1].split('}').length - 1);
+  const w = t.match(/add (one|two|three) mana/i);
+  return w ? { one: 1, two: 2, three: 3 }[w[1].toLowerCase()] : 0;
+}
+const fetchesLand = c => !!c && /Sorcery|Instant/.test(c.type_line || '') && /search your library for [^.]*lands?[^.]*onto the battlefield|put (a|up to \w+) lands? cards? [^.]*onto the battlefield/i.test(c.oracle_text || '');
+const isSick = c => /Creature/.test(c?.type_line || '');
+function goldfish(deck, runs = 1000) {
+  const lib0 = deck.cards.filter(c => c.board === 'main').flatMap(c => Array(c.qty).fill(c.name));
+  const info = Object.fromEntries([...new Set(lib0)].map(n => { const c = S.cards[n]; return [n, { land: mainType(c) === 'Land', cmc: c?.cmc || 0, mana: c && mainType(c) !== 'Land' ? manaOf(c) : 0, fetch: fetchesLand(c), sick: isSick(c) }]; }));
+  const cmd = deck.cards.filter(c => c.board === 'commander').map(c => S.cards[c.name]?.cmc || 0).sort((a, b) => a - b);
+  const edh = deck.format === 'commander', T = 8;
+  const res = { runs, mull: 0, stuck: 0, cmdT: [], turns: Array.from({ length: T }, () => ({ mana: 0, spent: 0, curve: 0 })) };
+  const lands = h => h.filter(n => info[n].land).length;
+  for (let r = 0; r < runs; r++) {
+    let lib, hand, mull = 0;
+    for (;;) {
+      lib = shuffle(lib0.slice()); hand = lib.splice(0, 7);
+      const l = lands(hand);
+      if ((l >= 2 && l <= 5) || mull >= 2) break;
+      mull++;
+    }
+    if (mull) res.mull++;
+    for (let k = edh ? mull - 1 : mull; k > 0; k--) { // lägg de dyraste korten under
+      const i = hand.reduce((b, n, j) => (info[n].cmc > info[hand[b]].cmc ? j : b), 0); lib.push(hand.splice(i, 1)[0]);
+    }
+    let land = 0, tapped = 0, rocks = 0, sick = 0, cmdLeft = cmd.slice(), cmdT = null;
+    for (let t = 1; t <= T; t++) {
+      if ((t > 1 || edh) && lib.length) hand.push(lib.shift());
+      land += tapped; tapped = 0; rocks += sick; sick = 0;
+      const li = hand.findIndex(n => info[n].land); if (li >= 0) { hand.splice(li, 1); land++; }
+      let mana = land + rocks; const total = mana; let spent = 0;
+      for (;;) {
+        if (cmdLeft.length && cmdLeft[0] <= mana) { mana -= cmdLeft[0]; spent += cmdLeft.shift(); if (cmdT == null) cmdT = t; continue; }
+        const ok = hand.map((n, i) => ({ n, i, x: info[n] })).filter(o => !o.x.land && o.x.cmc <= mana);
+        if (!ok.length) break;
+        const ramp = ok.filter(o => o.x.mana || o.x.fetch).sort((a, b) => a.x.cmc - b.x.cmc)[0];
+        const pick = ramp || ok.sort((a, b) => b.x.cmc - a.x.cmc)[0];
+        hand.splice(pick.i, 1); mana -= pick.x.cmc; spent += pick.x.cmc;
+        if (pick.x.mana) { if (pick.x.sick) sick += pick.x.mana; else { rocks += pick.x.mana; mana += pick.x.mana; } }
+        if (pick.x.fetch) tapped++;
+      }
+      const tt = res.turns[t - 1]; tt.mana += total; tt.spent += spent; if (total >= t) tt.curve++;
+      if (t === 4 && land < 3) res.stuck++;
+    }
+    res.cmdT.push(cmdT);
+  }
+  return res;
+}
+function simCard(deck, el) {
+  const sig = deck.cards.map(c => c.name + c.qty + c.board).join();
+  const draw = r => {
+    const pct = v => Math.round(v / r.runs * 100) + ' %', avg = v => (v / r.runs).toFixed(1).replace('.', ',');
+    const cmd = deck.cards.filter(c => c.board === 'commander'), cmc = cmd.length ? Math.min(...cmd.map(c => S.cards[c.name]?.cmc || 0)) : null;
+    const cast = r.cmdT.filter(t => t != null), by = t => r.cmdT.filter(x => x != null && x <= t).length;
+    return `${cmd.length ? `<p>Befälhavaren (${cmc} mana) kommer ut i snitt <b>tur ${cast.length ? (cast.reduce((a, b) => a + b, 0) / cast.length).toFixed(1).replace('.', ',') : '–'}</b>. Senast tur ${cmc + 1} i <b>${pct(by(cmc + 1))}</b> av matcherna${cast.length < r.runs ? `, och i ${pct(r.runs - cast.length)} hinner den inte ut före tur 9` : ''}.</p>` : ''}
+      <p class="small">Mulligan i ${pct(r.mull)} av matcherna. I <b>${pct(r.stuck)}</b> har du färre än 3 länder tur 4.</p>
+      <table class="small"><thead><tr><th>Tur</th><th class="num">Mana</th><th class="num" title="Andel matcher med minst lika mycket mana som turens nummer">Mana i fas</th><th class="num">Använt</th></tr></thead><tbody>
+      ${r.turns.slice(0, 7).map((t, i) => `<tr><td>${i + 1}</td><td class="num">${avg(t.mana)}</td><td class="num">${pct(t.curve)}</td><td class="num">${avg(t.spent)}</td></tr>`).join('')}</tbody></table>
+      <p class="muted small">Mana = länder plus artefakter och varelser som ger mana (varelser först turen efter). Använt = hur mycket mana som gick till kort, när datorn spelar ramp först och sedan dyraste kortet som går. Färger räknas inte, så verkligheten är lite sämre. Mana i fas = andel matcher med minst lika mycket mana som turens nummer. Händer med färre än 2 eller fler än 5 länder tas mulligan på.</p>`;
+  };
+  const done = simCard.res?.deck === deck.id && simCard.res.sig === sig ? simCard.res.r : null;
+  el.innerHTML = `<div class="row"><h2 style="margin:0">Hur snabbt kommer leken igång?</h2><span class="spacer"></span><button class="btn small ${done ? '' : 'primary'}" id="simGo">${done ? 'Räkna igen' : 'Räkna på 1 000 matcher'}</button></div>
+    <div id="simRes">${done ? draw(done) : '<p class="small muted">Datorn spelar leken 1 000 gånger utan motståndare och räknar hur mycket mana du har varje tur och när befälhavaren kommer ut.</p>'}</div>`;
+  $('#simGo', el).onclick = () => { const r = goldfish(deck, 1000); simCard.res = { deck: deck.id, sig, r }; simCard(deck, el); };
+}
+function goldPlay(deck, st, el) {
+  const g = st.g, cmd = deck.cards.filter(c => c.board === 'commander');
+  if (!g) {
+    el.innerHTML = `<h2>Provspela</h2><p class="small muted">Spela de första turerna själv med handen ovan, utan motståndare. Då ser du hur snabbt leken kommer igång.</p>
+      <button class="btn primary" id="gStart" ${st.bottom ? 'disabled' : ''}>▶ Spela med den här handen</button>`;
+    $('#gStart', el).onclick = () => {
+      st.g = { turn: 1, hand: st.hand.slice(), lib: st.lib.slice(), lands: [], board: [], land: false, used: 0, cmdOut: [], casts: cmd.map(() => 0) };
+      if (deck.format === 'commander' && st.g.lib.length) st.g.hand.push(st.g.lib.shift());
+      render();
+    };
+    return;
+  }
+  const ready = x => x.t < g.turn || !x.tapped;
+  const avail = g.lands.filter(ready).length + g.board.reduce((a, b) => a + (b.t < g.turn || !isSick(S.cards[b.n]) ? manaOf(S.cards[b.n]) : 0), 0);
+  const left = avail - g.used, fig = (n, attrs = '') => { const c = S.cards[n]; return `<figure ${attrs}>${c?.thumb ? `<img src="${esc(c.thumb)}" alt="${esc(n)}" data-img="${esc(c.image)}">` : `<div class="noimg">${esc(n)}</div>`}</figure>`; };
+  el.innerHTML = `<div class="row"><h2 style="margin:0">Tur ${g.turn}</h2><span class="spacer"></span><span>Mana kvar <b>${left}</b> av ${avail}</span><span class="muted small">${g.lands.length} länder · ${g.lib.length} kort i leken</span></div>
+    <div class="row" style="margin:.5rem 0"><button class="btn primary small" id="gNext" ${g.turn >= 20 ? 'disabled' : ''}>Nästa tur ▶</button>${cmd.map((c, i) => `<button class="btn small" data-gcmd="${i}" ${g.cmdOut[i] ? 'disabled' : ''}>★ ${esc(c.name)} (${(S.cards[c.name]?.cmc || 0) + 2 * g.casts[i]})</button>`).join('')}<button class="btn small" id="gStop">Avsluta</button></div>
+    <h3>Handen <span class="muted small">(tryck för att spela)</span></h3><div class="hand">${g.hand.map((n, i) => fig(n, `data-gh="${i}" class="pickable"`)).join('') || '<p class="muted small">Tom hand.</p>'}</div>
+    <h3>På bordet</h3><div class="board">${[...g.lands.map(x => fig(x.n, `class="${ready(x) ? '' : 'tapped'}" title="Land"`)), ...g.board.map(x => fig(x.n))].join('') || '<p class="muted small">Inget än.</p>'}</div>
+    <p class="muted small">Ett land per tur. Mana från artefakter räknas direkt, från varelser turen efter. Kort som söker fram länder lägger dem tappade. Färger räknas inte.</p>`;
+  $('#gNext', el).onclick = () => { g.turn++; g.land = false; g.used = 0; if (g.lib.length) g.hand.push(g.lib.shift()); render(); };
+  $('#gStop', el).onclick = () => { st.g = null; render(); };
+  el.onclick = e => {
+    const c = e.target.closest('[data-gcmd]');
+    if (c) {
+      const i = +c.dataset.gcmd, n = cmd[i].name, cost = (S.cards[n]?.cmc || 0) + 2 * g.casts[i];
+      if (cost > left) return toast(`${n} kostar ${cost}, du har ${left} kvar`);
+      g.used += cost; g.casts[i]++; g.cmdOut[i] = true; g.board.push({ n, t: g.turn }); return render();
+    }
+    const h = e.target.closest('[data-gh]'); if (!h) return;
+    const i = +h.dataset.gh, n = g.hand[i], info = S.cards[n];
+    if (mainType(info) === 'Land') {
+      if (g.land) return toast('Du har redan spelat ett land den här turen');
+      g.land = true; g.lands.push({ n, t: g.turn }); g.hand.splice(i, 1); return render();
+    }
+    const cost = info?.cmc || 0;
+    if (cost > left) return toast(`${n} kostar ${cost}, du har ${left} kvar`);
+    g.used += cost; g.hand.splice(i, 1);
+    if (fetchesLand(info)) { g.lands.push({ n: 'Basic land', t: g.turn, tapped: true }); toast('Ett land läggs in tappat'); }
+    if (!/Instant|Sorcery/.test(info?.type_line || '')) g.board.push({ n, t: g.turn });
+    render();
+  };
 }
 
 // --- Förslag från EDHREC ---
@@ -1497,6 +1768,10 @@ function viewSettings() {
     ${S.cloud && S.v8 ? `<h3>Bytesförslag</h3>
     <label class="small row"><input type="checkbox" id="shareWants" ${S.profile.wants ? 'checked' : ''}> Visa vad jag saknar för den som har kortet till byte</label>
     <p class="small muted">Den som har ett kort till byte som saknas i dina lekar eller står på din önskelista får se det under Bytesförslag. Inget annat i din samling eller önskelista visas.</p>` : ''}
+    <h3>Säkerhetskopia</h3>
+    <p class="small muted">Ladda ner lekar, samling, utgåvor, önskelista, utlånat och spellogg som en fil. Spara den i molnet eller på datorn. Inläsning lägger bara till det som saknas.
+      ${(t => t ? `Senast nedladdad ${new Date(t).toLocaleDateString('sv-SE')}.` : 'Ingen kopia nedladdad från den här enheten än.')((() => { try { return +localStorage.getItem('lv-backup-at') || 0; } catch { return 0; } })())}</p>
+    <div class="row"><button class="btn" id="bkDown">⬇ Ladda ner säkerhetskopia</button><label class="btn">⬆ Läs in fil<input type="file" id="bkFile" accept=".json,application/json" hidden></label></div>
     <h3>Installera som app</h3>
     ${window.matchMedia?.('(display-mode: standalone)').matches ? '<p class="small good">Lekverkstan körs redan som installerad app.</p>'
       : installEvt ? '<p class="small muted">Lägg Lekverkstan på hemskärmen. Den startar då som en vanlig app och lekarna går att titta på utan nät.</p><button class="btn primary" id="install">Installera</button>'
@@ -1513,6 +1788,8 @@ function viewSettings() {
   </div>`;
   $('#themeSeg').onclick = e => { const b = e.target.closest('[data-theme-set]'); if (b) { setTheme(b.dataset.themeSet); render(); } };
   $('#alarmSel').onchange = e => { try { localStorage.setItem('lv-alarm', String(+e.target.value)); } catch {} updateBell(); };
+  $('#bkDown').onclick = () => { downloadBackup(); toast('Säkerhetskopian laddas ner'); setTimeout(render, 300); };
+  $('#bkFile').onchange = e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) restoreFile(f); };
   $('#priceSeg').onclick = e => {
     const b = e.target.closest('[data-price-set]'); if (!b) return;
     S.priceLevel = b.dataset.priceSet; try { localStorage.setItem('lv-price', S.priceLevel); } catch {}
@@ -2953,6 +3230,89 @@ function alarmNotes() {
   for (const d of wishDrops())
     out.push({ at: Date.now(), href: '#/onskelista', isNew: true, text: `${d.name} har blivit billigare`, sub: `${krE(d.from)} → ${krE(d.to)} · önskelistan` });
   return out;
+}
+
+// ---------- säkerhetskopia ----------
+// Allt eget som en fil. Inläsning lägger bara till det som saknas, inget tas bort eller skrivs över.
+function backupData() {
+  return {
+    app: 'lekverkstan', version: 1, exported: new Date().toISOString(),
+    decks: S.decks.map(d => ({ id: d.id, name: d.name, format: d.format, notes: d.notes || '', cards: d.cards, versions: d.versions || [], built: !!d.built })),
+    collection: S.collection, trade: S.trade || {},
+    prints: Object.fromEntries(Object.entries(S.colmeta || {}).filter(([, m]) => m?.prints?.length).map(([n, m]) => [n, m.prints])),
+    wishlist: S.wishlist.map(w => ({ name: w.name, qty: w.qty, max_price: w.max_price ?? null })),
+    loans: S.loans.map(l => ({ name: l.name, qty: l.qty, borrower: l.borrower, lent_on: l.lent_on, note: l.note || '' })),
+    games: S.games.map(g => ({ deck_id: g.deck_id, deck_name: g.deck_name, played_on: g.played_on, result: g.result, players: g.players, opponents: g.opponents || '', notes: g.notes || '' })),
+  };
+}
+function downloadBackup() {
+  const blob = new Blob([JSON.stringify(backupData(), null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `lekverkstan-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  try { localStorage.setItem('lv-backup-at', String(Date.now())); } catch {}
+}
+function restorePlan(b) {
+  if (!b || b.app !== 'lekverkstan' || !Array.isArray(b.decks)) throw new Error('Filen är ingen säkerhetskopia från Lekverkstan');
+  const str = (v, n) => String(v ?? '').slice(0, n);
+  const sig = d => str(d.name, 80) + '|' + JSON.stringify((d.cards || []).map(c => [String(c?.name), c?.qty | 0, c?.board]).sort());
+  const have = new Set(S.decks.map(sig)), ids = new Set(S.decks.map(d => d.id));
+  const decks = b.decks.filter(d => d && typeof d.name === 'string' && Array.isArray(d.cards) && !ids.has(d.id) && !have.has(sig(d))).slice(0, 200);
+  const col = Object.fromEntries(Object.entries(b.collection && typeof b.collection === 'object' ? b.collection : {})
+    .map(([n, q]) => [str(n, 150), Math.max(0, Math.min(999, q | 0))]).filter(([n, q]) => n && q > (S.collection[n] || 0)));
+  const after = n => Math.max(S.collection[n] || 0, col[n] || 0);
+  const prints = S.v4 ? Object.entries(b.prints || {}).filter(([n, p]) => Array.isArray(p) && p.length && !S.colmeta?.[n]?.prints?.length && after(n)) : [];
+  const trade = Object.entries(b.trade || {}).map(([n, q]) => [n, Math.min(q | 0, after(n))]).filter(([n, q]) => q > (S.trade?.[n] || 0));
+  const wish = S.v3 ? (Array.isArray(b.wishlist) ? b.wishlist : []).filter(w => w?.name && !S.wishlist.some(x => x.name === w.name)) : [];
+  const gk = g => [g.played_on, g.deck_name, g.result, g.opponents || '', g.notes || ''].join('|');
+  const gHave = new Set(S.games.map(gk));
+  const games = (Array.isArray(b.games) ? b.games : []).filter(g => g?.deck_name && ['win', 'loss', 'draw'].includes(g.result) && !gHave.has(gk(g)));
+  const lk = l => [l.name, l.borrower, l.lent_on].join('|');
+  const loans = S.v3 ? (Array.isArray(b.loans) ? b.loans : []).filter(l => l?.name && l.borrower && !S.loans.some(x => lk(x) === lk(l))) : [];
+  return { decks, col, prints, trade, wish, games, loans, exported: str(b.exported, 30) };
+}
+async function runRestore(plan, step) {
+  const idMap = {};
+  for (const d of plan.decks) {
+    const nd = await api('/api/decks', { method: 'POST', body: { name: d.name, format: d.format } });
+    idMap[d.id] = nd.id;
+    await api('/api/decks/' + nd.id, { method: 'PUT', body: { name: d.name, format: d.format === 'modern' ? 'modern' : 'commander', notes: String(d.notes || ''), cards: d.cards, versions: Array.isArray(d.versions) ? d.versions : [], ...(S.v6 ? { built: !!d.built } : {}) } });
+    step();
+  }
+  if (Object.keys(plan.col).length) { await api('/api/collection', { method: 'PUT', body: plan.col }); step(); }
+  for (const [name, prints] of plan.prints) await api('/api/prints', { method: 'PUT', body: { name, prints } }).catch(() => {});
+  if (plan.trade.length) await api('/api/trade', { method: 'PUT', body: Object.fromEntries(plan.trade) }).catch(() => {});
+  for (const w of plan.wish) { await api('/api/wishlist', { method: 'PUT', body: { name: String(w.name), qty: Math.max(1, w.qty | 0), ...(w.max_price != null ? { max_price: +w.max_price } : {}) } }); step(); }
+  for (const g of plan.games) { await api('/api/games', { method: 'POST', body: { ...g, deck_id: idMap[g.deck_id] || (S.decks.some(d => d.id === g.deck_id) ? g.deck_id : null) } }); step(); }
+  for (const l of plan.loans) { await api('/api/loans', { method: 'POST', body: l }); step(); }
+}
+async function restoreFile(file) {
+  let plan;
+  try { plan = restorePlan(JSON.parse(await file.text())); } catch (e) { return toast(e instanceof SyntaxError ? 'Filen gick inte att läsa' : e.message, 4500); }
+  const n = plan.decks.length + Object.keys(plan.col).length + plan.prints.length + plan.trade.length + plan.wish.length + plan.games.length + plan.loans.length;
+  const li = (k, t) => k ? `<li>${t}</li>` : '';
+  openModal(`<div class="row"><h2 style="margin:0">Läs in säkerhetskopia</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
+    <p class="small muted">Kopian är från ${esc(plan.exported.slice(0, 10) || 'okänt datum')}. Bara det som saknas läggs till. Inget tas bort och inget du har nu skrivs över.</p>
+    ${n ? `<ul class="small">${li(plan.decks.length, `${plan.decks.length} lekar som saknas: ${esc(plan.decks.slice(0, 5).map(d => d.name).join(', '))}${plan.decks.length > 5 ? '…' : ''}`)}
+      ${li(Object.keys(plan.col).length, `${Object.keys(plan.col).length} kort i samlingen där kopian har fler ex`)}
+      ${li(plan.prints.length, `utgåvor för ${plan.prints.length} kort`)}${li(plan.trade.length, `${plan.trade.length} kort till byte`)}
+      ${li(plan.wish.length, `${plan.wish.length} kort på önskelistan`)}${li(plan.games.length, `${plan.games.length} matcher`)}${li(plan.loans.length, `${plan.loans.length} utlånade kort`)}</ul>
+      <div class="progress" id="rsProg" hidden><div style="width:0"></div></div>
+      <div class="row"><span class="spacer"></span><button class="btn primary" id="rsGo">Lägg till</button></div>`
+      : '<p><b>Allt i kopian finns redan.</b> Det finns inget att lägga till.</p>'}`, box => {
+    if (!$('#rsGo', box)) return;
+    $('#rsGo', box).onclick = async () => {
+      $('#rsGo', box).disabled = true; $('#rsProg', box).hidden = false;
+      const total = plan.decks.length + (Object.keys(plan.col).length ? 1 : 0) + plan.wish.length + plan.games.length + plan.loans.length || 1;
+      let done = 0;
+      try {
+        await runRestore(plan, () => { done++; $('div', $('#rsProg', box)).style.width = Math.min(100, done / total * 100) + '%'; });
+        toast('Säkerhetskopian är inläst', 3000);
+        setTimeout(() => location.reload(), 800);
+      } catch (e) { toast('Avbröts: ' + e.message + '. Det som hann läggas till ligger kvar, läs in filen igen för resten.', 6000); $('#rsGo', box).disabled = false; }
+    };
+  });
 }
 
 // ---------- notisklockan ----------
