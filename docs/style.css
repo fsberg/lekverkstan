@@ -323,3 +323,19 @@ body.life-on main { max-width: none; padding: 0; }
 .dot.a, .dot.b { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; vertical-align: middle; }
 .cmplist { margin: .2rem 0; padding-left: 1.1rem; columns: 2 11rem; }
 .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+/* billigare alternativ */
+.alts { display: grid; gap: .5rem; margin-top: .5rem; }
+.alt { display: flex; gap: .6rem; align-items: flex-start; padding: .4rem; border: 1px solid var(--border); border-radius: 8px; }
+.alt img { width: 56px; border-radius: 4px; cursor: pointer; flex: none; }
+.alt .grow { flex: 1; min-width: 0; }
+.alt .altbtn { display: flex; flex-direction: column; gap: .3rem; align-items: flex-end; }
+.alt .clamp { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* lekanalys */
+.formrow { display: flex; flex-wrap: wrap; gap: 4px; }
+.form { width: 14px; height: 14px; border-radius: 50%; background: var(--text-2); opacity: .5; }
+.form.win { background: #2e9d5b; opacity: 1; }
+.form.loss { background: #d0464b; opacity: 1; }
+.wbar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; min-width: 40px; }
+.wbar > div { height: 100%; background: #2e9d5b; }
+tr.few { opacity: .55; }
