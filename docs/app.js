@@ -2709,7 +2709,7 @@ function lifeOp(p, k, d, j, n) {
   if (k === 'tok') { op.n = cleanTok(n); if (!op.n || (d < 0 && !s.players[p].tok?.[op.n])) return; }
   if (k === 'mark') op.d = s.marks?.[MARKS[j][0]] === p ? 0 : 1; // tryck igen = ta bort
   applyOp(s, op); saveLife();
-  if (s.room && (k === 'life' || k === 'cmd')) lifeFx(s.me, p, k === 'cmd' ? -op.d : op.d, k === 'cmd');
+  if (k === 'life' || k === 'cmd') lifeFx(s.room ? s.me : null, p, k === 'cmd' ? -op.d : op.d, k === 'cmd');
   if (s.room) roomSend({ t: 'op', op });
 }
 function roomMsg(m) {

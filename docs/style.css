@@ -240,6 +240,8 @@ body.life-on main { max-width: none; padding: 0; }
 .pl.hitfx::before { background: radial-gradient(circle at 50% 50%, rgba(255,60,40,.65), rgba(255,20,20,.25) 60%, rgba(255,0,0,0) 85%); }
 .pl.healfx::before { background: radial-gradient(circle at 50% 60%, rgba(140,255,180,.6), rgba(80,255,150,.15) 60%, rgba(80,255,150,0) 85%); animation-duration: .9s; }
 .pl.hitfx:not(.flip) { animation: plhit .4s ease-out; }
+.pl.flip.hitfx { animation: plhitflip .4s ease-out; }
+@keyframes plhitflip { 0% { transform: rotate(180deg); } 20% { transform: rotate(180deg) translate(-7px, 2px); } 40% { transform: rotate(180deg) translate(6px, -2px); } 60% { transform: rotate(180deg) translate(-4px, 1px); } 80% { transform: rotate(180deg) translate(2px, 0); } 100% { transform: rotate(180deg); } }
 @keyframes plflash { from { opacity: 1; } to { opacity: 0; } }
 @keyframes plhit { 0% { transform: none; } 20% { transform: translate(-7px, 2px); } 40% { transform: translate(6px, -2px); } 60% { transform: translate(-4px, 1px); } 80% { transform: translate(2px, 0); } 100% { transform: none; } }
 .fx-bolt { position: fixed; left: 0; top: 0; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; pointer-events: none; z-index: 65;
@@ -248,7 +250,7 @@ body.life-on main { max-width: none; padding: 0; }
 .fx-bolt.heal { background: radial-gradient(circle, #fff 0 18%, #d4ffe2 30%, #3fe08a 55%, rgba(60,220,130,0) 72%); box-shadow: 0 0 22px 8px rgba(70,230,140,.6); }
 .fx-spark { position: fixed; width: 8px; height: 8px; border-radius: 50%; pointer-events: none; z-index: 65; background: #ffcf6b; box-shadow: 0 0 8px 2px rgba(255,110,40,.8); }
 .fx-plus { position: absolute; pointer-events: none; z-index: 2; color: #d8ffe6; font-weight: 800; font-size: clamp(1rem, 5vmin, 1.8rem); text-shadow: 0 0 10px rgba(70,255,150,.9); }
-@media (prefers-reduced-motion: reduce) { .pl.hitfx:not(.flip) { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .pl.hitfx:not(.flip), .pl.flip.hitfx { animation: none; } }
 .pl .ldelta { position: absolute; top: calc(50% - clamp(3.2rem, 15vmin, 8rem)); left: 0; right: 0; text-align: center; font-size: clamp(1.3rem, 6vmin, 2.4rem); font-weight: 800; font-variant-numeric: tabular-nums; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.5); animation: ldpop .18s ease-out; }
 .pl .ldelta[hidden] { display: none; }
 .pl .ldelta.neg { color: #ffd1cc; } .pl .ldelta.pos { color: #c9ffd9; }
