@@ -2782,16 +2782,52 @@ function fxRise(pl) {
   }
 }
 let fxLive = 0;
+// ljud skapas i webbläsaren (Web Audio), inga ljudfiler. Telefonen släpper bara fram ljud efter ett tryck.
+const snd = { ctx: null, nb: null, last: {} };
+const soundOn = () => { try { return localStorage.getItem('lv-sound') !== '0'; } catch { return true; } };
+function audio() {
+  try {
+    if (!snd.ctx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; snd.ctx = new C(); }
+    if (snd.ctx.state === 'suspended') snd.ctx.resume().catch(() => {});
+    return snd.ctx;
+  } catch { return null; }
+}
+function sfx(kind) {
+  if (!soundOn()) return;
+  const a = audio(); if (!a) return;
+  const now = a.currentTime;
+  if (now - (snd.last[kind] ?? -1) < .06) return; snd.last[kind] = now;
+  try {
+    if (!snd.nb) { const b = a.createBuffer(1, Math.floor(a.sampleRate * .5), a.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; snd.nb = b; }
+    const out = a.createGain(); out.gain.value = .55; out.connect(a.destination);
+    const env = (g, t, peak, dur) => { g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + .012); g.gain.exponentialRampToValueAtTime(.0001, t + dur); };
+    const noise = (t, dur, type, f0, f1, peak, q = 1) => {
+      const n = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+      n.buffer = snd.nb; f.type = type; f.Q.value = q; f.frequency.setValueAtTime(f0, t); if (f1) f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      env(g, t, peak, dur); n.connect(f); f.connect(g); g.connect(out); n.start(t); n.stop(t + dur + .05);
+    };
+    const tone = (t, dur, type, f0, f1, peak) => {
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = type; o.frequency.setValueAtTime(f0, t); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      env(g, t, peak, dur); o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + .05);
+    };
+    if (kind === 'hit') { tone(now, .22, 'sine', 210, 55, .9); noise(now, .12, 'bandpass', 1800, 600, .45, .8); }
+    else if (kind === 'cmd') { tone(now, .32, 'sawtooth', 120, 38, .35); tone(now, .3, 'sine', 160, 45, .8); noise(now, .18, 'bandpass', 900, 300, .4, .7); }
+    else if (kind === 'heal') [523, 784, 1047, 1568].forEach((f, k) => tone(now + k * .065, .4, 'triangle', f, 0, .22));
+    else if (kind === 'whoosh') noise(now, .38, 'bandpass', 350, 2600, .3, 1.6);
+    else if (kind === 'healwhoosh') { noise(now, .35, 'bandpass', 900, 3500, .15, 2); tone(now, .35, 'sine', 600, 1200, .08); }
+  } catch {}
+}
 function lifeFx(src, to, d, cmd) {
   if (!d || !location.hash.startsWith('#/liv')) return;
   const tp = $(`.pl[data-p="${to}"]`), sp = src == null ? null : $(`.pl[data-p="${src}"]`);
   const heal = d > 0;
-  const land = () => { fxPulse(tp, heal ? 'healfx' : 'hitfx'); if (heal) fxRise(tp); else if (tp) { const c = fxCenter(tp); fxSparks(c.x, c.y, false); } };
+  const land = () => { sfx(heal ? 'heal' : cmd ? 'cmd' : 'hit'); fxPulse(tp, heal ? 'healfx' : 'hitfx'); if (heal) fxRise(tp); else if (tp) { const c = fxCenter(tp); fxSparks(c.x, c.y, false); } };
   // till sig själv, okänd källa eller lugnt läge: bara effekten på spelaren
   if (!tp || !sp || sp === tp || fxCalm() || !document.body.animate || fxLive > 8) return land();
   const a = fxCenter(sp), b = fxCenter(tp);
   const bolt = document.createElement('div'); bolt.className = 'fx-bolt' + (heal ? ' heal' : cmd ? ' cmd' : '');
-  document.body.appendChild(bolt); fxLive++;
+  document.body.appendChild(bolt); fxLive++; sfx(heal ? 'healwhoosh' : 'whoosh');
   // båge: kontrollpunkt vinkelrätt mot linjen
   const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, bend = Math.min(120, len * .35) * (Math.random() < .5 ? -1 : 1);
   const cx = (a.x + b.x) / 2 - (dy / len) * bend, cy = (a.y + b.y) / 2 + (dx / len) * bend;
@@ -2927,7 +2963,7 @@ function viewLife(code) {
       <div class="extra">${lifeExtra(p, s)}</div>
       <button class="more" data-more aria-label="Gift, befälhavarskada, räknare och tokens">⋯</button>
     </div>`).join('')}
-    <div class="lbar">${sh ? `<button class="btn small" id="lInvite" title="Bjud in de andra">Kod ${esc(s.room)}</button><span class="small" id="lPeers" style="color:#aaa"></span>` : ''}<button class="btn small" id="lDice" title="Vem börjar?" aria-label="Slå tärning om vem som börjar">🎲</button><button class="btn small" id="lEnd">Avsluta</button><button class="btn small" id="lReset">Börja om</button><button class="btn small" id="lExit">Stäng</button></div></div>`;
+    <div class="lbar">${sh ? `<button class="btn small" id="lInvite" title="Bjud in de andra">Kod ${esc(s.room)}</button><span class="small" id="lPeers" style="color:#aaa"></span>` : ''}<button class="btn small" id="lSound" title="Ljud på/av" aria-label="Ljud ${soundOn() ? 'på' : 'av'}">${soundOn() ? '🔊' : '🔇'}</button><button class="btn small" id="lDice" title="Vem börjar?" aria-label="Slå tärning om vem som börjar">🎲</button><button class="btn small" id="lEnd">Avsluta</button><button class="btn small" id="lReset">Börja om</button><button class="btn small" id="lExit">Stäng</button></div></div>`;
   updateRoomBar();
   s.players.forEach((_, i) => paintDelta(i));
   const life = $('.life');
@@ -2935,6 +2971,7 @@ function viewLife(code) {
   let hold, held;
   const change = (i, d) => { lifeOp(i, 'life', d); lifeRedraw(); };
   life.addEventListener('pointerdown', e => {
+    if (soundOn()) audio(); // låser upp ljudet på telefonen
     const b = e.target.closest('.hit'); if (!b) return;
     const i = +b.closest('.pl').dataset.p, d = +b.dataset.d;
     held = false; clearInterval(hold);
@@ -2965,6 +3002,11 @@ function viewLife(code) {
   $('#lExit').onclick = () => { wakeLock(false); document.body.classList.remove('life-on'); location.hash = '#/matcher'; };
   $('#lEnd').onclick = () => lifeEnd();
   $('#lDice').onclick = () => lifeRoll();
+  $('#lSound').onclick = e => {
+    const on = !soundOn(); try { localStorage.setItem('lv-sound', on ? '1' : '0'); } catch {}
+    e.currentTarget.textContent = on ? '🔊' : '🔇'; e.currentTarget.setAttribute('aria-label', 'Ljud ' + (on ? 'på' : 'av'));
+    if (on) { audio(); sfx('heal'); } toast(on ? 'Ljudet är på' : 'Ljudet är av');
+  };
 }
 // ---- vem börjar: alla slår en d20, högst börjar, de som delar högsta slår om ----
 const d20 = () => 1 + crypto.getRandomValues(new Uint32Array(1))[0] % 20;
