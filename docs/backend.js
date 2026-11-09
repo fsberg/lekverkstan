@@ -381,7 +381,14 @@
     const gm = p.match(/^\/api\/games\/([\w-]+)$/);
     if (gm && m === 'DELETE') { fail((await sb.from('lv_games').delete().eq('id', gm[1])).error); return { ok: true }; }
     if (gm && m === 'PUT') {
-      const { data, error } = await sb.from('lv_games').update({ deck_id: body.deck_id || null, deck_name: String(body.deck_name || 'Okänd lek').slice(0, 80) }).eq('id', gm[1]).select().single();
+      const patch = {};
+      if ('deck_name' in body) Object.assign(patch, { deck_id: body.deck_id || null, deck_name: String(body.deck_name || 'Okänd lek').slice(0, 80) });
+      if (/^\d{4}-\d{2}-\d{2}$/.test(body.played_on || '')) patch.played_on = body.played_on;
+      if (['win', 'loss', 'draw'].includes(body.result)) patch.result = body.result;
+      if ('players' in body) patch.players = Math.max(2, Math.min(10, body.players | 0 || 2));
+      if ('opponents' in body) patch.opponents = String(body.opponents || '').slice(0, 300);
+      if ('notes' in body) patch.notes = String(body.notes || '').slice(0, 1000);
+      const { data, error } = await sb.from('lv_games').update(patch).eq('id', gm[1]).select().single();
       fail(error); return data;
     }
     if (p === '/api/wishlist' && m === 'PUT') {

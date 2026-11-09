@@ -358,6 +358,17 @@ async function api(req, res, url) {
   }
   const gm = p.match(/^\/api\/games\/([\w-]+)$/);
   if (gm && m === 'DELETE') { games = games.filter(g => g.id !== gm[1]); save('games.json', games); return send(res, 200, { ok: true }); }
+  if (gm && m === 'PUT') {
+    const b = await readBody(req), g = games.find(x => x.id === gm[1]);
+    if (!g) return send(res, 404, { error: 'Matchen finns inte' });
+    if ('deck_name' in b) Object.assign(g, { deck_id: b.deck_id || null, deck_name: String(b.deck_name || 'Okänd lek').slice(0, 80) });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(b.played_on || '')) g.played_on = b.played_on;
+    if (['win', 'loss', 'draw'].includes(b.result)) g.result = b.result;
+    if ('players' in b) g.players = Math.max(2, Math.min(10, b.players | 0 || 2));
+    if ('opponents' in b) g.opponents = String(b.opponents || '').slice(0, 300);
+    if ('notes' in b) g.notes = String(b.notes || '').slice(0, 1000);
+    save('games.json', games); return send(res, 200, g);
+  }
 
   if (p === '/api/decks' && m === 'POST') {
     const b = await readBody(req);

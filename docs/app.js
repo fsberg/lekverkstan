@@ -2190,10 +2190,10 @@ function viewGames(sub, arg) {
         <div class="card"><h2>Per lek</h2>${stats.length ? `<table><thead><tr><th>Lek</th><th class="num">Matcher</th><th class="num">V–F–O</th><th class="num">Vinst</th></tr></thead><tbody>
           ${stats.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.n}</td><td class="num">${s.win}–${s.loss}–${s.draw}</td><td class="num"><b>${s.pct} %</b></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Inga matcher loggade än.</p>'}</div>
         <div class="card"><h2>Senaste matcherna</h2>${S.games.length ? `<div class="table-scroll"><table><thead><tr><th>Datum</th><th>Lek</th><th>Resultat</th><th>Mot</th><th></th></tr></thead><tbody>
-          ${S.games.slice(0, 100).map(g => `<tr><td class="small">${esc(g.played_on)}</td><td>${g.logged_by && !g.deck_id && S.decks.length ? `<select data-gdeck="${esc(g.id)}" title="Loggad av någon annan – välj vilken lek du spelade"><option value="">${esc(g.deck_name)} – välj lek</option>${S.decks.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select>` : esc(g.deck_name)}</td>
+          ${S.games.slice(0, 100).map(g => `<tr><td class="small">${esc(g.played_on)}</td><td>${g.logged_by && !g.deck_id ? `<button class="btn small" data-editg="${esc(g.id)}" title="Loggad av någon annan – välj vilken lek du spelade">Välj lek</button>` : esc(g.deck_name)}</td>
             <td><span class="pill ${g.result === 'win' ? 'good' : g.result === 'loss' ? 'bad' : ''}">${RES_SV[g.result]}</span> <span class="muted small">${g.players} sp.</span></td>
             <td class="small">${esc(g.opponents)}${g.notes ? `<div class="muted">${esc(g.notes)}</div>` : ''}</td>
-            <td><button class="icon-btn" data-delg="${esc(g.id)}" title="Ta bort">✕</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Här hamnar dina matcher.</p>'}</div>
+            <td style="white-space:nowrap"><button class="icon-btn" data-editg="${esc(g.id)}" title="Ändra" aria-label="Ändra matchen">✎</button><button class="icon-btn" data-delg="${esc(g.id)}" title="Ta bort" aria-label="Ta bort matchen">✕</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Här hamnar dina matcher.</p>'}</div>
       </div>
       <div class="card" style="align-self:start"><h2>Logga en match</h2>
         <p><label class="small">Lek<br><select id="gDeck" style="width:100%">${S.decks.slice().sort((a, b) => b.updated - a.updated).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}<option value="">Annan lek…</option></select></label></p>
@@ -2220,18 +2220,41 @@ function viewGames(sub, arg) {
       toast('Matchen är sparad'); render();
     } catch (e) { toast('Kunde inte spara: ' + e.message, 4000); }
   };
-  $('#gm').addEventListener('change', async e => {
-    const sel = e.target.closest('[data-gdeck]'), d = sel && S.decks.find(x => x.id === sel.value); if (!d) return;
-    try {
-      const g = await api('/api/games/' + sel.dataset.gdeck, { method: 'PUT', body: { deck_id: d.id, deck_name: d.name } });
-      S.games = S.games.map(x => (x.id === g.id ? g : x)); toast('Leken är vald'); render();
-    } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
-  });
   $('#gm').addEventListener('click', async e => {
+    const ed = e.target.closest('[data-editg]'); if (ed) return editGame(ed.dataset.editg);
     const b = e.target.closest('[data-delg]'); if (!b) return;
     if (!confirm('Ta bort matchen?')) return;
     await api('/api/games/' + b.dataset.delg, { method: 'DELETE' });
     S.games = S.games.filter(g => g.id !== b.dataset.delg); render();
+  });
+}
+// ändra en loggad match: lek, datum, resultat, spelare, motståndare, anteckning
+function editGame(id) {
+  const g = S.games.find(x => x.id === id); if (!g) return;
+  const known = S.decks.some(d => d.id === g.deck_id);
+  let result = g.result;
+  openModal(`<div class="row"><h2 style="margin:0">Ändra match</h2><span class="spacer"></span><button class="icon-btn" data-close aria-label="Stäng">✕</button></div>
+    ${g.logged_by ? '<p class="muted small">Loggad av någon annan. Välj vilken lek du spelade.</p>' : ''}
+    <p><label class="small">Lek<br><select id="eDeck" style="width:100%"><option value="">Annan lek…</option>${S.decks.slice().sort((a, b) => b.updated - a.updated).map(d => `<option value="${d.id}" ${d.id === g.deck_id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label></p>
+    <p id="eOtherWrap" ${known ? 'hidden' : ''}><input type="text" id="eOther" placeholder="Lekens namn" style="width:100%" maxlength="80" value="${known || g.deck_name === 'Ingen lek vald' ? '' : esc(g.deck_name)}"></p>
+    <p class="row"><label class="small">Datum<br><input type="date" id="eDate" value="${esc(g.played_on)}"></label>
+      <label class="small">Spelare<br><input type="number" id="ePlayers" min="2" max="10" value="${g.players}" style="width:5rem"></label></p>
+    <div class="seg" id="eRes" style="margin:.4rem 0">${Object.entries(RES_SV).map(([k, v]) => `<button data-r="${k}" class="${k === g.result ? 'on' : ''}">${v}</button>`).join('')}</div>
+    <p><input type="text" id="eOpp" placeholder="Mot vilka?" style="width:100%" maxlength="300" value="${esc(g.opponents || '')}"></p>
+    <p><input type="text" id="eNotes" placeholder="Anteckning (valfritt)" style="width:100%" maxlength="1000" value="${esc(g.notes || '')}"></p>
+    <p class="row"><span class="spacer"></span><button class="btn" data-close>Avbryt</button><button class="btn primary" id="eSave">Spara</button></p>`, box => {
+    $('#eDeck', box).onchange = e => { $('#eOtherWrap', box).hidden = !!e.target.value; };
+    $('#eRes', box).onclick = e => { const b = e.target.closest('[data-r]'); if (!b) return; result = b.dataset.r; $$('#eRes button', box).forEach(x => x.classList.toggle('on', x === b)); };
+    $('#eSave', box).onclick = async () => {
+      const d = S.decks.find(x => x.id === $('#eDeck', box).value);
+      const deck_name = d ? d.name : $('#eOther', box).value.trim();
+      if (!deck_name) return toast('Välj lek eller skriv lekens namn');
+      try {
+        const n = await api('/api/games/' + id, { method: 'PUT', body: { deck_id: d ? d.id : null, deck_name, played_on: $('#eDate', box).value, result, players: +$('#ePlayers', box).value || 2, opponents: $('#eOpp', box).value.trim(), notes: $('#eNotes', box).value.trim() } });
+        S.games = S.games.map(x => (x.id === id ? { ...x, ...n } : x)).sort((a, b) => (b.played_on > a.played_on ? 1 : b.played_on < a.played_on ? -1 : 0));
+        closeModal(); toast('Matchen är ändrad'); render();
+      } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
+    };
   });
 }
 
