@@ -236,6 +236,11 @@ body.life-on main { max-width: none; padding: 0; }
 .pl.flip { transform: rotate(180deg); }
 .pl.out { filter: grayscale(1) brightness(.55); }
 .pl .lifeval { font-size: clamp(3rem, 16vmin, 9rem); font-weight: 800; font-variant-numeric: tabular-nums; pointer-events: none; }
+.pl .ldelta { position: absolute; top: calc(50% - clamp(3.2rem, 15vmin, 8rem)); left: 0; right: 0; text-align: center; font-size: clamp(1.3rem, 6vmin, 2.4rem); font-weight: 800; font-variant-numeric: tabular-nums; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.5); animation: ldpop .18s ease-out; }
+.pl .ldelta[hidden] { display: none; }
+.pl .ldelta.neg { color: #ffd1cc; } .pl .ldelta.pos { color: #c9ffd9; }
+.life.shared .pl:not(.mine) .ldelta { top: calc(50% - clamp(2.4rem, 10vmin, 5.5rem)); font-size: clamp(1.1rem, 4.5vmin, 1.8rem); }
+@keyframes ldpop { from { transform: scale(1.35); } to { transform: scale(1); } }
 .pl .pname { position: absolute; top: .5rem; left: 0; right: 0; text-align: center; font-weight: 600; opacity: .9; pointer-events: none; }
 .pl .extra { position: absolute; bottom: .5rem; left: .5rem; right: 3rem; display: flex; gap: .5rem; flex-wrap: wrap; font-size: .85rem; pointer-events: none; }
 .pl .hit { position: absolute; top: 0; bottom: 0; width: 50%; border: 0; background: transparent; cursor: pointer; }

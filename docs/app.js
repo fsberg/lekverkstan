@@ -2694,7 +2694,7 @@ function roomMsg(m) {
     const st = cleanShared(m.state);
     if (s.synced || !st) return;
     // egen lek och plats behålls, startlivet följer med för Börja om
-    Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: (Array.isArray(m.applied) ? m.applied : []).filter(x => typeof x === 'string').slice(-400), synced: true }); saveLife();
+    Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: (Array.isArray(m.applied) ? m.applied : []).filter(x => typeof x === 'string').slice(-400), synced: true }); clearDeltas(); saveLife();
     if (s.me == null || !s.players[s.me]) return location.hash.startsWith('#/liv') ? render() : null;
     return lifeRedraw();
   }
@@ -2713,9 +2713,25 @@ function roomMsg(m) {
     if (m.name) s.players[i].name = String(m.name).slice(0, 20);
     saveLife(); return lifeRedraw();
   }
-  if (m.t === 'reset') { const st = cleanShared(m.state); if (!st) return; Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: [] }); saveLife(); toast('Matchen började om'); return lifeRedraw(); }
+  if (m.t === 'reset') { const st = cleanShared(m.state); if (!st) return; Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: [] }); clearDeltas(); saveLife(); toast('Matchen började om'); return lifeRedraw(); }
   if (m.t === 'end') return lifeFinish(m.win === 'draw' ? 'draw' : m.win == null ? null : String(num(m.win, 0, 5)), m.by ? String(m.by).slice(0, 20) : '');
 }
+// summan av livändringar i rad visas en liten stund, nollas efter 5 s utan nya ändringar
+const lifeDelta = {};
+function paintDelta(i) {
+  const el = $(`.pl[data-p="${i}"] .ldelta`), x = lifeDelta[i]; if (!el) return;
+  el.hidden = !x; if (!x) return;
+  el.textContent = x.sum > 0 ? '+' + x.sum : x.sum < 0 ? '−' + -x.sum : '±0';
+  el.className = 'ldelta ' + (x.sum < 0 ? 'neg' : 'pos');
+  el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+}
+function showDelta(i, d) {
+  const x = lifeDelta[i] = lifeDelta[i] || { sum: 0 };
+  x.sum += d; clearTimeout(x.t);
+  x.t = setTimeout(() => { delete lifeDelta[i]; paintDelta(i); }, 5000);
+  paintDelta(i);
+}
+function clearDeltas() { for (const k in lifeDelta) { clearTimeout(lifeDelta[k].t); delete lifeDelta[k]; } }
 function updateRoomBar() { const el = $('#lPeers'); if (el) el.textContent = room.err ? 'ingen anslutning' : livePeers() ? `${livePeers() + 1} anslutna` : 'väntar på de andra…'; }
 // rita om bara siffrorna, så att pågående tryck inte avbryts
 function lifeRedraw() {
@@ -2724,6 +2740,8 @@ function lifeRedraw() {
   if ($$('.pl').length !== s.players.length) return render();
   s.players.forEach((p, i) => {
     const pl = $(`.pl[data-p="${i}"]`); if (!pl) return;
+    const old = +$('.lifeval', pl).textContent;
+    if (old !== p.life) showDelta(i, p.life - old);
     $('.lifeval', pl).textContent = p.life;
     $('.pname', pl).textContent = p.name;
     $('.extra', pl).innerHTML = lifeExtra(p, s);
@@ -2805,12 +2823,13 @@ function viewLife(code) {
     <div class="pl ${i < top ? 'flip' : ''} ${isOut(p, s) ? 'out' : ''} ${sh && i === s.me ? 'mine' : ''}" data-p="${i}">
       <div class="pname">${esc(p.name)}</div>
       <button class="hit minus" data-d="-1" aria-label="Minus ett liv"></button><button class="hit plus" data-d="1" aria-label="Plus ett liv"></button>
-      <div class="lifeval">${p.life}</div>
+      <div class="lifeval">${p.life}</div><div class="ldelta" hidden></div>
       <div class="extra">${lifeExtra(p, s)}</div>
       <button class="more" data-more aria-label="Gift, befälhavarskada, räknare och tokens">⋯</button>
     </div>`).join('')}
     <div class="lbar">${sh ? `<button class="btn small" id="lInvite" title="Bjud in de andra">Kod ${esc(s.room)}</button><span class="small" id="lPeers" style="color:#aaa"></span>` : ''}<button class="btn small" id="lDice" title="Vem börjar?" aria-label="Slå tärning om vem som börjar">🎲</button><button class="btn small" id="lEnd">Avsluta</button><button class="btn small" id="lReset">Börja om</button><button class="btn small" id="lExit">Stäng</button></div></div>`;
   updateRoomBar();
+  s.players.forEach((_, i) => paintDelta(i));
   const life = $('.life');
   // håll inne = ±10 i taget
   let hold, held;
@@ -2839,7 +2858,7 @@ function viewLife(code) {
   $('#lReset').onclick = () => {
     if (!confirm('Börja om med samma spelare?')) return;
     for (const p of s.players) Object.assign(p, { life: s.setup.life, poison: 0, cmd: {}, ctr: {}, tok: {} });
-    s.start = Date.now(); s.applied = []; s.starter = undefined; s.marks = {}; saveLife();
+    s.start = Date.now(); s.applied = []; s.starter = undefined; s.marks = {}; clearDeltas(); saveLife();
     if (sh) roomSend({ t: 'reset', state: Object.fromEntries(shared.map(k => [k, s[k]])) });
     render();
   };
