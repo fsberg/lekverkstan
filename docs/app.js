@@ -2998,6 +2998,23 @@ function lifeMore(i) {
   });
 }
 const lastDeckId = () => S.decks.slice().sort((a, b) => b.updated - a.updated)[0]?.id || '';
+// konton utan namn syns inte för de andra (spelare i livräknaren, bytesbörsen), så fråga en gång per besök
+function askName() {
+  if (S.profile?.name || sessionStorage.getItem('lv-askname') || !$('#modal').hidden) return;
+  try { sessionStorage.setItem('lv-askname', '1'); } catch {}
+  openModal(`<h2 style="margin-top:0">Vad heter du?</h2>
+    <p class="muted small">Namnet visas för kompisarna, så att de kan välja dig som spelare i livräknaren och se vem som har kort till byte.</p>
+    <p><input type="text" id="anName" maxlength="20" placeholder="T.ex. Jonte" style="width:100%"></p>
+    <p class="row"><span class="spacer"></span><button class="btn" data-close>Senare</button><button class="btn primary" id="anSave">Spara</button></p>`, box => {
+    $('#anName', box).focus();
+    $('#anName', box).onkeydown = e => { if (e.key === 'Enter') $('#anSave', box).click(); };
+    $('#anSave', box).onclick = async () => {
+      const name = $('#anName', box).value.trim(); if (!name) return toast('Skriv ett namn');
+      try { await api('/api/profile', { method: 'PUT', body: { name } }); S.profile.name = name; closeModal(); toast('Namnet är sparat'); }
+      catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
+    };
+  });
+}
 const useUsers = () => !!(S.cloud && S.v10 && S.profile?.id && S.users?.length);
 function lifeEnd() {
   const s = lifeState();
@@ -3983,6 +4000,7 @@ addEventListener('hashchange', () => { $('#preview').hidden = true; render(); })
   if (S.cloud && lifeState()?.room) roomJoin(lifeState().room);
   if (S.cloud && S.v4 && !S.offline) loadBookings().then(() => location.hash.startsWith('#/utforska') && render());
   if (S.cloud && S.v7 && !S.offline) loadEvents().then(updateBell);
+  if (S.cloud && !S.offline && !S.profile?.name) setTimeout(askName, 600);
   if (!S.v3) $$('[data-nav=onskelista]').forEach(a => a.remove());
   updateWishBadge();
   const names = new Set([...S.decks.flatMap(d => d.cards.map(c => c.name)), ...Object.keys(S.collection), ...S.wishlist.map(w => w.name)]);
