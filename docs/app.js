@@ -2709,6 +2709,7 @@ function lifeOp(p, k, d, j, n) {
   if (k === 'tok') { op.n = cleanTok(n); if (!op.n || (d < 0 && !s.players[p].tok?.[op.n])) return; }
   if (k === 'mark') op.d = s.marks?.[MARKS[j][0]] === p ? 0 : 1; // tryck igen = ta bort
   applyOp(s, op); saveLife();
+  if (s.room && (k === 'life' || k === 'cmd')) lifeFx(s.me, p, k === 'cmd' ? -op.d : op.d, k === 'cmd');
   if (s.room) roomSend({ t: 'op', op });
 }
 function roomMsg(m) {
@@ -2729,7 +2730,16 @@ function roomMsg(m) {
     return lifeRedraw();
   }
   if (!s.players || s.room !== room.code) return;
-  if (m.t === 'op') { if (applyOp(s, m.op)) { saveLife(); lifeRedraw(); } return; }
+  if (m.t === 'op') {
+    if (!applyOp(s, m.op)) return;
+    saveLife(); lifeRedraw();
+    if (m.op.k === 'life' || m.op.k === 'cmd') {
+      const src = Object.entries(s.seats || {}).find(([, v]) => v === String(m.from).slice(0, 20))?.[0];
+      const d = num(m.op.d, -999, 999);
+      lifeFx(src == null ? null : +src, num(m.op.p, 0, 5), m.op.k === 'cmd' ? -d : d, m.op.k === 'cmd');
+    }
+    return;
+  }
   if (m.t === 'dice') {
     const n = s.players.length, r = m.res || {};
     if (!Array.isArray(r.rolls) || r.rolls.length !== n) return;
@@ -2745,6 +2755,50 @@ function roomMsg(m) {
   }
   if (m.t === 'reset') { const st = cleanShared(m.state); if (!st) return; Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: [] }); clearDeltas(); saveLife(); toast('Matchen började om'); return lifeRedraw(); }
   if (m.t === 'end') return lifeFinish(m.win === 'draw' ? 'draw' : m.win == null ? null : String(num(m.win, 0, 5)), m.by ? String(m.by).slice(0, 20) : '');
+}
+// effekter i delad räknare: skada flyger från den som gör den till den som tar den, liv lyser grönt
+const fxCalm = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+function fxPulse(pl, cls) {
+  if (!pl) return;
+  pl.classList.remove('hitfx', 'healfx'); void pl.offsetWidth; pl.classList.add(cls);
+  clearTimeout(pl.fxT); pl.fxT = setTimeout(() => pl.classList.remove(cls), 900);
+}
+function fxCenter(pl) { const r = ($('.lifeval', pl) || pl).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+function fxSparks(x, y, heal) {
+  if (fxCalm() || !document.body.animate) return;
+  for (let k = 0; k < 9; k++) {
+    const e = document.createElement('div'); e.className = 'fx-spark' + (heal ? ' heal' : '');
+    e.style.left = x + 'px'; e.style.top = y + 'px'; document.body.appendChild(e);
+    const a = (k / 9) * Math.PI * 2 + Math.random() * .5, r = 30 + Math.random() * 40;
+    e.animate([{ transform: 'translate(-50%,-50%) scale(1)', opacity: 1 }, { transform: `translate(calc(-50% + ${Math.cos(a) * r}px), calc(-50% + ${Math.sin(a) * r}px)) scale(.3)`, opacity: 0 }], { duration: 420 + Math.random() * 200, easing: 'cubic-bezier(.2,.7,.3,1)' }).onfinish = () => e.remove();
+  }
+}
+function fxRise(pl) {
+  if (fxCalm() || !pl.animate) return;
+  for (let k = 0; k < 6; k++) {
+    const e = document.createElement('div'); e.className = 'fx-plus'; e.textContent = k % 2 ? '✚' : '✦';
+    e.style.left = (25 + Math.random() * 50) + '%'; e.style.top = (55 + Math.random() * 25) + '%'; pl.appendChild(e);
+    e.animate([{ transform: 'translateY(0) scale(.6)', opacity: 0 }, { opacity: 1, offset: .25 }, { transform: `translateY(-${50 + Math.random() * 50}px) scale(1.1)`, opacity: 0 }], { duration: 800 + Math.random() * 400, delay: k * 70, easing: 'ease-out', fill: 'backwards' }).onfinish = () => e.remove();
+  }
+}
+let fxLive = 0;
+function lifeFx(src, to, d, cmd) {
+  if (!d || !location.hash.startsWith('#/liv')) return;
+  const tp = $(`.pl[data-p="${to}"]`), sp = src == null ? null : $(`.pl[data-p="${src}"]`);
+  const heal = d > 0;
+  const land = () => { fxPulse(tp, heal ? 'healfx' : 'hitfx'); if (heal) fxRise(tp); else if (tp) { const c = fxCenter(tp); fxSparks(c.x, c.y, false); } };
+  // till sig själv, okänd källa eller lugnt läge: bara effekten på spelaren
+  if (!tp || !sp || sp === tp || fxCalm() || !document.body.animate || fxLive > 8) return land();
+  const a = fxCenter(sp), b = fxCenter(tp);
+  const bolt = document.createElement('div'); bolt.className = 'fx-bolt' + (heal ? ' heal' : cmd ? ' cmd' : '');
+  document.body.appendChild(bolt); fxLive++;
+  // båge: kontrollpunkt vinkelrätt mot linjen
+  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, bend = Math.min(120, len * .35) * (Math.random() < .5 ? -1 : 1);
+  const cx = (a.x + b.x) / 2 - (dy / len) * bend, cy = (a.y + b.y) / 2 + (dx / len) * bend;
+  const frames = Array.from({ length: 13 }, (_, k) => { const t = k / 12, u = 1 - t; const x = u * u * a.x + 2 * u * t * cx + t * t * b.x, y = u * u * a.y + 2 * u * t * cy + t * t * b.y; return { transform: `translate(${x}px, ${y}px) scale(${.7 + Math.sin(t * Math.PI) * .6})` }; });
+  const done = () => { bolt.remove(); fxLive--; land(); };
+  const an = bolt.animate(frames, { duration: Math.min(650, 300 + len * .6), easing: 'cubic-bezier(.4,0,.7,1)' });
+  an.onfinish = done; an.oncancel = () => { bolt.remove(); fxLive--; };
 }
 // summan av livändringar i rad visas en liten stund, nollas efter 5 s utan nya ändringar
 const lifeDelta = {};
