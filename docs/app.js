@@ -2190,7 +2190,7 @@ function viewGames(sub, arg) {
         <div class="card"><h2>Per lek</h2>${stats.length ? `<table><thead><tr><th>Lek</th><th class="num">Matcher</th><th class="num">V–F–O</th><th class="num">Vinst</th></tr></thead><tbody>
           ${stats.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.n}</td><td class="num">${s.win}–${s.loss}–${s.draw}</td><td class="num"><b>${s.pct} %</b></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Inga matcher loggade än.</p>'}</div>
         <div class="card"><h2>Senaste matcherna</h2>${S.games.length ? `<div class="table-scroll"><table><thead><tr><th>Datum</th><th>Lek</th><th>Resultat</th><th>Mot</th><th></th></tr></thead><tbody>
-          ${S.games.slice(0, 100).map(g => `<tr><td class="small">${esc(g.played_on)}</td><td>${esc(g.deck_name)}</td>
+          ${S.games.slice(0, 100).map(g => `<tr><td class="small">${esc(g.played_on)}</td><td>${g.logged_by && !g.deck_id && S.decks.length ? `<select data-gdeck="${esc(g.id)}" title="Loggad av någon annan – välj vilken lek du spelade"><option value="">${esc(g.deck_name)} – välj lek</option>${S.decks.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select>` : esc(g.deck_name)}</td>
             <td><span class="pill ${g.result === 'win' ? 'good' : g.result === 'loss' ? 'bad' : ''}">${RES_SV[g.result]}</span> <span class="muted small">${g.players} sp.</span></td>
             <td class="small">${esc(g.opponents)}${g.notes ? `<div class="muted">${esc(g.notes)}</div>` : ''}</td>
             <td><button class="icon-btn" data-delg="${esc(g.id)}" title="Ta bort">✕</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Här hamnar dina matcher.</p>'}</div>
@@ -2220,6 +2220,13 @@ function viewGames(sub, arg) {
       toast('Matchen är sparad'); render();
     } catch (e) { toast('Kunde inte spara: ' + e.message, 4000); }
   };
+  $('#gm').addEventListener('change', async e => {
+    const sel = e.target.closest('[data-gdeck]'), d = sel && S.decks.find(x => x.id === sel.value); if (!d) return;
+    try {
+      const g = await api('/api/games/' + sel.dataset.gdeck, { method: 'PUT', body: { deck_id: d.id, deck_name: d.name } });
+      S.games = S.games.map(x => (x.id === g.id ? g : x)); toast('Leken är vald'); render();
+    } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
+  });
   $('#gm').addEventListener('click', async e => {
     const b = e.target.closest('[data-delg]'); if (!b) return;
     if (!confirm('Ta bort matchen?')) return;
@@ -2641,7 +2648,7 @@ function cleanShared(st) {
   if (!st || !Array.isArray(st.players) || st.players.length < 2 || st.players.length > 6) return null;
   const n = st.players.length;
   const players = st.players.map((p, i) => ({
-    name: String(p?.name || `Spelare ${i + 1}`).slice(0, 20), life: num(p?.life, -999, 9999, 40), poison: num(p?.poison, 0, 99),
+    name: String(p?.name || `Spelare ${i + 1}`).slice(0, 20), uid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(p?.uid) ? p.uid : undefined, life: num(p?.life, -999, 9999, 40), poison: num(p?.poison, 0, 99),
     cmd: Object.fromEntries(Object.entries(p?.cmd || {}).filter(([j]) => /^\d$/.test(j) && +j < n).map(([j, v]) => [j, num(v, 0, 999)])),
     ctr: Object.fromEntries(Object.entries(p?.ctr || {}).filter(([k]) => CTRS.some(c => c[0] === k)).map(([k, v]) => [k, num(v, 0, 999)]).filter(([, v]) => v)),
     tok: Object.fromEntries(Object.entries(p?.tok || {}).slice(0, 12).map(([k, v]) => [cleanTok(k), num(v, 0, 999)]).filter(([k, v]) => k && v)),
@@ -2710,7 +2717,7 @@ function roomMsg(m) {
   if (m.t === 'seat') {
     const i = num(m.p, 0, 5, -1); if (!s.players[i]) return;
     s.seats = s.seats || {}; s.seats[i] = String(m.from).slice(0, 20);
-    if (m.name) s.players[i].name = String(m.name).slice(0, 20);
+    if (m.name && !s.players[i].uid) s.players[i].name = String(m.name).slice(0, 20);
     saveLife(); return lifeRedraw();
   }
   if (m.t === 'reset') { const st = cleanShared(m.state); if (!st) return; Object.assign(s, st, { setup: { ...st.setup, deck: s.setup?.deck || '' }, applied: [] }); clearDeltas(); saveLife(); toast('Matchen började om'); return lifeRedraw(); }
@@ -2775,7 +2782,7 @@ function viewLife(code) {
     document.body.classList.remove('life-on');
     const taken = s.seats || {};
     $('#app').innerHTML = `<div class="card" style="max-width:520px;margin:0 auto"><h1>Vem är du?</h1>
-      <div class="grid">${s.players.map((p, i) => `<button class="btn" data-seat="${i}">${esc(p.name)}${taken[i] && taken[i] !== CID ? ' <span class="muted small">(vald av någon)</span>' : ''}</button>`).join('')}</div>
+      <div class="grid">${s.players.map((p, i) => `<button class="btn ${p.uid && p.uid === S.profile?.id ? 'primary' : ''}" data-seat="${i}">${esc(p.name)}${p.uid && p.uid === S.profile?.id ? ' (du)' : ''}${taken[i] && taken[i] !== CID ? ' <span class="muted small">(vald av någon)</span>' : ''}</button>`).join('')}</div>
       <p><label class="small">Ditt namn<br><input type="text" id="lMyName" maxlength="20" placeholder="Lämna tomt för att behålla" style="width:100%" value="${esc(S.profile?.name || '')}"></label></p>
       <p><label class="small">Min lek (för spelloggen)<br><select id="lDeck" style="width:100%"><option value="">Logga inte matchen</option>${S.decks.map(d => `<option value="${d.id}" ${d.id === (s.myDeck || lastDeckId()) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label></p></div>`;
     $('#app').onclick = e => {
@@ -2783,8 +2790,9 @@ function viewLife(code) {
       $('#app').onclick = null;
       const i = +b.dataset.seat, name = $('#lMyName').value.trim();
       s.me = i; s.myDeck = $('#lDeck').value; s.seats = { ...(s.seats || {}), [i]: CID };
-      if (name) s.players[i].name = name;
-      saveLife(); roomSend({ t: 'seat', p: i, name }); render();
+      const nm = s.players[i].uid ? '' : name; // användarnamn ändras inte
+      if (nm) s.players[i].name = nm;
+      saveLife(); roomSend({ t: 'seat', p: i, name: nm }); render();
     };
     return;
   }
@@ -2800,14 +2808,29 @@ function viewLife(code) {
       <p class="row"><span class="spacer"></span><button class="btn primary" id="lGo">Starta</button></p>
       ${window.LV_CHANNEL ? `<h3>Gå med i någon annans räknare</h3><div class="row"><input type="text" id="lCode" maxlength="6" placeholder="Kod, t.ex. K7Q2XM" style="text-transform:uppercase;width:9rem"><button class="btn" id="lJoin">Gå med</button></div>` : ''}
       <p class="muted small">Skärmen hålls tänd medan räknaren är öppen. Tryck på ⋯ för gift, befälhavarskada, monark, räknare och tokens. Allt sparas i telefonen om sidan laddas om.</p></div>`;
-    const names = () => { const n = +$('#lN').value; $('#lNames').innerHTML = Array.from({ length: n }, (_, i) => `<p><input type="text" data-pn="${i}" maxlength="20" placeholder="Spelare ${i + 1}" value="${esc(last.names[i] || '')}" style="width:100%"></p>`).join(''); };
+    // inloggad: spelarna väljs bland användarna, så att matchen loggas hos alla
+    const users = useUsers() ? S.users.filter(u => u.id !== S.profile.id).sort((a, b) => a.name.localeCompare(b.name, 'sv')) : null;
+    const names = () => {
+      const n = +$('#lN').value;
+      $('#lNames').innerHTML = users ? `<p><input type="text" value="${esc(S.profile.name || 'Jag')} (du)" disabled style="width:100%"></p>${Array.from({ length: n - 1 }, (_, k) => `<p><select data-pu="${k + 1}" style="width:100%"><option value="">Välj spelare ${k + 2}…</option>${users.map(u => `<option value="${u.id}" ${last.uids?.[k + 1] === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></p>`).join('')}
+        ${S.profile.name ? '' : '<p class="small" style="color:var(--bad)">Skriv ditt namn under <a href="#/installningar">Inställningar</a> först.</p>'}
+        <p class="muted small">Bara de som har ett konto med namn i Lekverkstan går att välja. Matchen loggas hos alla, och var och en väljer sin lek i spelloggen efteråt.</p>`
+        : Array.from({ length: n }, (_, i) => `<p><input type="text" data-pn="${i}" maxlength="20" placeholder="Spelare ${i + 1}" value="${esc(last.names[i] || '')}" style="width:100%"></p>`).join('');
+    };
     names(); $('#lN').onchange = names;
     $('#lDeck').onchange = e => { const d = S.decks.find(x => x.id === e.target.value); if (d) $('#lL').value = d.format === 'modern' ? '20' : '40'; };
     if ($('#lJoin')) $('#lJoin').onclick = () => { const c = $('#lCode').value.trim().toUpperCase(); if (/^[A-Z0-9]{6}$/.test(c)) location.hash = '#/liv/' + c; else toast('Koden är 6 tecken'); };
     $('#lGo').onclick = () => {
       const n = +$('#lN').value, life = +$('#lL').value, share = !!$('#lShare')?.checked;
-      const nm = $$('[data-pn]').map((i, k) => i.value.trim() || `Spelare ${k + 1}`);
-      lifeState.s = { setup: { n, life, names: nm, deck: $('#lDeck').value, share }, start: Date.now(), players: nm.map(name => ({ name, life, poison: 0, cmd: {}, ctr: {}, tok: {} })), applied: [], marks: {} };
+      let nm, uids;
+      if (users) {
+        if (!S.profile.name) return toast('Skriv ditt namn under Inställningar först');
+        uids = [S.profile.id, ...$$('[data-pu]').map(x => x.value)];
+        if (uids.some(x => !x)) return toast('Välj alla spelare');
+        if (new Set(uids).size !== uids.length) return toast('Samma spelare är vald två gånger');
+        nm = uids.map(id => (id === S.profile.id ? S.profile.name : S.users.find(u => u.id === id)?.name || 'Okänd').slice(0, 20));
+      } else nm = $$('[data-pn]').map((i, k) => i.value.trim() || `Spelare ${k + 1}`);
+      lifeState.s = { setup: { n, life, names: nm, uids, deck: $('#lDeck').value, share }, start: Date.now(), players: nm.map((name, k) => ({ name, uid: uids?.[k], life, poison: 0, cmd: {}, ctr: {}, tok: {} })), applied: [], marks: {} };
       if (share) Object.assign(lifeState.s, { room: roomCode(), me: 0, myDeck: $('#lDeck').value, synced: true, seats: { 0: CID } });
       saveLife();
       if (share) { roomJoin(lifeState.s.room); location.hash = '#/liv/' + lifeState.s.room; } else render();
@@ -2952,6 +2975,7 @@ function lifeMore(i) {
   });
 }
 const lastDeckId = () => S.decks.slice().sort((a, b) => b.updated - a.updated)[0]?.id || '';
+const useUsers = () => !!(S.cloud && S.v10 && S.profile?.id && S.users?.length);
 function lifeEnd() {
   const s = lifeState();
   const alive = s.players.map((p, i) => ({ p, i })).filter(x => !isOut(x.p, s));
@@ -2980,10 +3004,18 @@ async function lifeFinish(w, by) {
   if (w != null && d && me != null) {
     const result = w === 'draw' ? 'draw' : +w === me ? 'win' : 'loss';
     const mins = Math.round((Date.now() - s.start) / 60000);
+    const uids = s.players.map(p => p.uid), mid = 'liv-' + Math.round(s.start);
+    const linked = !!(S.v10 && uids.every(Boolean) && uids[me] === S.profile?.id);
     try {
-      const g = await api('/api/games', { method: 'POST', body: { deck_id: d.id, deck_name: d.name, result, players: s.players.length,
+      const g = await api('/api/games', { method: 'POST', body: { deck_id: d.id, deck_name: d.name, result, players: s.players.length, match_id: linked ? mid : undefined,
         opponents: s.players.filter((_, i) => i !== me).map(p => p.name).join(', '), notes: `Livräknare: ${w === 'draw' ? 'oavgjort' : s.players[+w].name + ' vann'}, ${mins} min` } });
-      S.games.unshift(g); toast('Matchen är sparad');
+      S.games = [g, ...S.games.filter(x => x.id !== g.id)];
+      let msg = 'Matchen är sparad';
+      if (linked) {
+        try { const k = await api('/api/match-log', { method: 'POST', body: { match: mid, players: uids, winner: w === 'draw' ? null : +w, minutes: mins } }); if (k) msg = 'Matchen är sparad hos alla'; }
+        catch (err) { msg = 'Sparad hos dig, men inte hos de andra: ' + err.message; }
+      }
+      toast(msg, 4000);
     } catch (err) { toast('Kunde inte spara: ' + err.message, 4000); }
   } else if (by) toast(w == null ? `${by} avbröt matchen` : 'Matchen är slut');
   else if (w == null) toast('Matchen avbröts');

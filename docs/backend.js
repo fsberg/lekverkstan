@@ -8,7 +8,7 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
-  let v2 = false, v4 = false, v7 = false, v8 = false;
+  let v2 = false, v4 = false, v7 = false, v8 = false, v10 = false;
   const colQty = {}; // egna antal, för att veta när ett kort läggs till (sortering på senast inlagt)
   let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
@@ -213,7 +213,7 @@
       ]);
       fail(d.error); fail(c.error);
       // v2-tabeller: saknas de (gammal databas) blir det bara tomt
-      const [t, g, pr, w, l, cm, bu, sh, ev, wa] = await Promise.all([
+      const [t, g, pr, w, l, cm, bu, sh, ev, wa, mt] = await Promise.all([
         sb.from('lv_collection').select('name, for_trade').eq('owner', user.id).gt('for_trade', 0),
         sb.from('lv_games').select('*').order('played_on', { ascending: false }).order('created', { ascending: false }),
         sb.from('lv_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
@@ -229,7 +229,12 @@
         sb.from('lv_events').select('id').limit(0),
         // v8: bytesförslag
         sb.from('lv_profiles').select('share_wants').eq('user_id', user.id).maybeSingle(),
+        // v10: matcher loggas hos alla spelare
+        sb.from('lv_games').select('match_id').limit(0),
       ]);
+      v10 = !mt.error;
+      // användare som går att välja som spelare (bara de som har ett namn)
+      const us = v10 ? await sb.from('lv_profiles').select('user_id, display_name').neq('display_name', '').limit(500) : { data: [] };
       v7 = !ev.error && !sh.error;
       v8 = !wa.error;
       v4 = !cm.error;
@@ -242,9 +247,10 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
-        v3: !w.error, v4, v6: !bu.error, v7, v8,
+        v3: !w.error, v4, v6: !bu.error, v7, v8, v10,
+        users: (us.data || []).map(r => ({ id: r.user_id, name: String(r.display_name || '').trim().slice(0, 20) })).filter(u => u.name),
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
-        profile: { name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games, wants: !!wa.data?.share_wants },
+        profile: { id: user.id, name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games, wants: !!wa.data?.share_wants },
         cloud: true,
         settings: { svenskaMagicUrl: ls.get('lv-sm-url', SM_DEFAULT) },
       };
@@ -359,11 +365,25 @@
         played_on: body.played_on || undefined, result: ['win', 'loss', 'draw'].includes(body.result) ? body.result : 'loss',
         players: Math.max(2, Math.min(10, body.players | 0 || 2)), opponents: String(body.opponents || '').slice(0, 300), notes: String(body.notes || '').slice(0, 1000),
       };
+      // från livräknaren: samma match kan redan vara loggad åt mig av någon annan, då fylls leken i
+      if (v10 && /^liv-\d{1,16}$/.test(body.match_id || '')) {
+        const { data, error } = await sb.from('lv_games').upsert({ ...row, owner: user.id, match_id: body.match_id }, { onConflict: 'owner,match_id' }).select().single();
+        fail(error); return data;
+      }
       const { data, error } = await sb.from('lv_games').insert(row).select().single();
+      fail(error); return data;
+    }
+    if (p === '/api/match-log' && m === 'POST') {
+      if (!v10) return 0;
+      const { data, error } = await sb.rpc('lv_log_match', { p_match: String(body.match || ''), p_players: (body.players || []).slice(0, 6), p_winner: body.winner == null ? null : body.winner | 0, p_minutes: Math.max(0, body.minutes | 0) });
       fail(error); return data;
     }
     const gm = p.match(/^\/api\/games\/([\w-]+)$/);
     if (gm && m === 'DELETE') { fail((await sb.from('lv_games').delete().eq('id', gm[1])).error); return { ok: true }; }
+    if (gm && m === 'PUT') {
+      const { data, error } = await sb.from('lv_games').update({ deck_id: body.deck_id || null, deck_name: String(body.deck_name || 'Okänd lek').slice(0, 80) }).eq('id', gm[1]).select().single();
+      fail(error); return data;
+    }
     if (p === '/api/wishlist' && m === 'PUT') {
       const row = { owner: user.id, name: String(body.name || '').slice(0, 150) };
       for (const k of ['qty', 'max_price', 'last_price', 'in_stock', 'checked_at', 'alert', 'note']) if (k in body) row[k] = body[k];
