@@ -2922,10 +2922,11 @@ function viewLife(code) {
       ${window.LV_CHANNEL ? `<h3>Gå med i någon annans räknare</h3><div class="row"><input type="text" id="lCode" maxlength="6" placeholder="Kod, t.ex. K7Q2XM" style="text-transform:uppercase;width:9rem"><button class="btn" id="lJoin">Gå med</button></div>` : ''}
       <p class="muted small">Skärmen hålls tänd medan räknaren är öppen. Tryck på ⋯ för gift, befälhavarskada, monark, räknare och tokens. Allt sparas i telefonen om sidan laddas om.</p></div>`;
     // inloggad: spelarna väljs bland användarna, så att matchen loggas hos alla
-    const users = useUsers() ? S.users.filter(u => u.id !== S.profile.id).sort((a, b) => a.name.localeCompare(b.name, 'sv')) : null;
+    const users = useUsers() ? [...S.users.filter(u => u.id !== S.profile.id), { id: S.profile.id, name: S.profile.name || 'Jag' }].sort((a, b) => a.name.localeCompare(b.name, 'sv')) : null;
+    const pick = k => last.uids?.[k] ?? (k === 0 ? S.profile.id : '');
     const names = () => {
       const n = +$('#lN').value;
-      $('#lNames').innerHTML = users ? `<p><input type="text" value="${esc(S.profile.name || 'Jag')} (du)" disabled style="width:100%"></p>${Array.from({ length: n - 1 }, (_, k) => `<p><select data-pu="${k + 1}" style="width:100%"><option value="">Välj spelare ${k + 2}…</option>${users.map(u => `<option value="${u.id}" ${last.uids?.[k + 1] === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></p>`).join('')}
+      $('#lNames').innerHTML = users ? `${Array.from({ length: n }, (_, k) => `<p><select data-pu="${k}" style="width:100%"><option value="">Välj spelare ${k + 1}…</option>${users.map(u => `<option value="${u.id}" ${pick(k) === u.id ? 'selected' : ''}>${esc(u.name)}${u.id === S.profile.id ? ' (du)' : ''}</option>`).join('')}</select></p>`).join('')}
         ${S.profile.name ? '' : '<p class="small" style="color:var(--bad)">Skriv ditt namn under <a href="#/installningar">Inställningar</a> först.</p>'}
         <p class="muted small">Bara de som har ett konto med namn i Lekverkstan går att välja. Matchen loggas hos alla, och var och en väljer sin lek i spelloggen efteråt.</p>`
         : Array.from({ length: n }, (_, i) => `<p><input type="text" data-pn="${i}" maxlength="20" placeholder="Spelare ${i + 1}" value="${esc(last.names[i] || '')}" style="width:100%"></p>`).join('');
@@ -2937,14 +2938,15 @@ function viewLife(code) {
       const n = +$('#lN').value, life = +$('#lL').value, share = !!$('#lShare')?.checked;
       let nm, uids;
       if (users) {
-        if (!S.profile.name) return toast('Skriv ditt namn under Inställningar först');
-        uids = [S.profile.id, ...$$('[data-pu]').map(x => x.value)];
+        uids = $$('[data-pu]').map(x => x.value);
         if (uids.some(x => !x)) return toast('Välj alla spelare');
+        if (uids.includes(S.profile.id) && !S.profile.name) return toast('Skriv ditt namn under Inställningar först');
         if (new Set(uids).size !== uids.length) return toast('Samma spelare är vald två gånger');
         nm = uids.map(id => (id === S.profile.id ? S.profile.name : S.users.find(u => u.id === id)?.name || 'Okänd').slice(0, 20));
       } else nm = $$('[data-pn]').map((i, k) => i.value.trim() || `Spelare ${k + 1}`);
       lifeState.s = { setup: { n, life, names: nm, uids, deck: $('#lDeck').value, share }, start: Date.now(), players: nm.map((name, k) => ({ name, uid: uids?.[k], life, poison: 0, cmd: {}, ctr: {}, tok: {} })), applied: [], marks: {} };
-      if (share) Object.assign(lifeState.s, { room: roomCode(), me: 0, myDeck: $('#lDeck').value, synced: true, seats: { 0: CID } });
+      const mine = uids ? Math.max(0, uids.indexOf(S.profile.id)) : 0;
+      if (share) Object.assign(lifeState.s, { room: roomCode(), me: mine, myDeck: $('#lDeck').value, synced: true, seats: { [mine]: CID } });
       saveLife();
       if (share) { roomJoin(lifeState.s.room); location.hash = '#/liv/' + lifeState.s.room; } else render();
     };
@@ -3136,7 +3138,9 @@ function lifeEnd() {
 async function lifeFinish(w, by) {
   const s = lifeState();
   if (!s?.players) return;
-  const me = s.room ? s.me : 0, d = S.decks.find(x => x.id === (s.room ? s.myDeck : s.setup.deck));
+  // en telefon: jag är den plats där mitt konto är valt (eller plats 1 utan konton). Är jag inte med sparas inget hos mig.
+  const myIdx = s.setup?.uids ? s.setup.uids.indexOf(S.profile?.id) : 0;
+  const me = s.room ? s.me : myIdx >= 0 ? myIdx : null, d = S.decks.find(x => x.id === (s.room ? s.myDeck : s.setup.deck));
   if (w != null && d && me != null) {
     const result = w === 'draw' ? 'draw' : +w === me ? 'win' : 'loss';
     const mins = Math.round((Date.now() - s.start) / 60000);
