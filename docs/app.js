@@ -4072,6 +4072,7 @@ function render() {
   else if (h.startsWith('/matcher')) viewGames(h.split('/')[2], h.split('/')[3]);
   else if (h.startsWith('/bygg')) viewBuild();
   else if (h.startsWith('/regler')) viewRules(h.split('/')[2]);
+  else if (h.startsWith('/draft') && typeof viewDraft === 'function') viewDraft(h.split('/')[2]);
   else if (h.startsWith('/samling')) viewCollection();
   else if (h.startsWith('/installningar')) viewSettings();
   else viewDecks();
