@@ -1,4 +1,4 @@
-// Lekverkstan – turnering under Spela: Swiss, bäst av tre. Sparas på enheten (localStorage lv-tour),
+// Manakeep – turnering under Spela: Swiss, bäst av tre. Sparas på enheten (localStorage lv-tour),
 // kan delas live med de andra vid bordet (Realtime broadcast, inget sparas på servern) och
 // färdiga matcher sparas i spelloggen hos spelarna som har konto.
 'use strict';

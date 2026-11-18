@@ -1,4 +1,4 @@
-// Lekverkstan – gränssnitt (vanilla JS, ingen byggprocess)
+// Manakeep – gränssnitt (vanilla JS, ingen byggprocess)
 'use strict';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -1773,8 +1773,8 @@ function viewSettings() {
       <div class="row"><button class="btn" id="bkDown">⬇ Ladda ner</button><label class="btn">⬆ Läs in fil<input type="file" id="bkFile" accept=".json,application/json" hidden></label></div>
       <p class="small muted" style="margin-bottom:0">${backupAt ? `Senast nedladdad ${new Date(backupAt).toLocaleDateString('sv-SE')}.` : 'Ingen kopia nedladdad från den här enheten än.'}</p></div>
     <div class="card"><h2>Installera som app</h2>
-    ${window.matchMedia?.('(display-mode: standalone)').matches ? '<p class="small good" style="margin:0">Lekverkstan körs redan som installerad app.</p>'
-      : installEvt ? '<p class="small muted">Lägg Lekverkstan på hemskärmen. Den startar då som en vanlig app och lekarna går att titta på utan nät.</p><button class="btn primary" id="install">Installera</button>'
+    ${window.matchMedia?.('(display-mode: standalone)').matches ? '<p class="small good" style="margin:0">Manakeep körs redan som installerad app.</p>'
+      : installEvt ? '<p class="small muted">Lägg Manakeep på hemskärmen. Den startar då som en vanlig app och lekarna går att titta på utan nät.</p><button class="btn primary" id="install">Installera</button>'
       : '<p class="small" style="margin:0">På iPhone: tryck på Dela i Safari och välj <b>Lägg till på hemskärmen</b>. På Android: öppna menyn i Chrome och välj <b>Installera app</b>.</p>'}</div>
   </div>`;
   $('#helpAll').onchange = e => { try { localStorage.setItem('lv-help', e.target.checked ? '1' : '0'); } catch {} render(); };
@@ -1841,7 +1841,7 @@ async function renderGroups() {
     const t = e.target.closest('button'); if (!t) return;
     if (t.dataset.glink) {
       const url = groupLink(t.dataset.glink);
-      if (navigator.share) { try { await navigator.share({ title: 'Lekverkstan', text: `Gå med i ${g.name} i Lekverkstan`, url }); } catch {} return; }
+      if (navigator.share) { try { await navigator.share({ title: 'Manakeep', text: `Gå med i ${g.name} i Manakeep`, url }); } catch {} return; }
       try { await navigator.clipboard.writeText(url); toast('Länken är kopierad – skicka den till den du vill bjuda in', 3500); } catch { prompt('Kopiera länken:', url); }
       return;
     }
@@ -3019,7 +3019,7 @@ function viewLife(code) {
       const n = +$('#lN').value;
       $('#lNames').innerHTML = users ? `${Array.from({ length: n }, (_, k) => `<p><select data-pu="${k}" style="width:100%"><option value="">Välj spelare ${k + 1}…</option>${users.map(u => `<option value="${u.id}" ${pick(k) === u.id ? 'selected' : ''}>${esc(u.name)}${u.id === S.profile.id ? ' (du)' : ''}</option>`).join('')}</select></p>`).join('')}
         ${S.profile.name ? '' : '<p class="small" style="color:var(--bad)">Skriv ditt namn under <a href="#/installningar">Inställningar</a> först.</p>'}
-        <p class="muted small">Bara de som har ett konto med namn i Lekverkstan går att välja. Matchen loggas hos alla, och var och en väljer sin lek i spelloggen efteråt.</p>`
+        <p class="muted small">Bara de som har ett konto med namn i Manakeep går att välja. Matchen loggas hos alla, och var och en väljer sin lek i spelloggen efteråt.</p>`
         : Array.from({ length: n }, (_, i) => `<p><input type="text" data-pn="${i}" maxlength="20" placeholder="Spelare ${i + 1}" value="${esc(last.names[i] || '')}" style="width:100%"></p>`).join('');
     };
     names(); $('#lN').onchange = names;
@@ -3297,7 +3297,7 @@ const RULES_SV = {
       <tr><td><b>4</b></td><td><b>Optimized</b> – så starkt som möjligt, bara banlistan gäller.</td></tr>
       <tr><td><b>5</b></td><td><b>cEDH</b> – turneringsnivå med metan i fokus.</td></tr>
     </tbody></table>
-    <p class="small muted">Lekverkstan uppskattar bracket under Lista → Kontroll i varje Commander-lek.</p>`,
+    <p class="small muted">Manakeep uppskattar bracket under Lista → Kontroll i varje Commander-lek.</p>`,
 };
 // vanliga nyckelord: engelska namnet (som på korten) och en kort förklaring
 const KEYWORDS = [
@@ -3530,13 +3530,13 @@ function backupData() {
 function downloadBackup() {
   const blob = new Blob([JSON.stringify(backupData(), null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = `lekverkstan-${new Date().toISOString().slice(0, 10)}.json`;
+  a.href = URL.createObjectURL(blob); a.download = `manakeep-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.append(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
   try { localStorage.setItem('lv-backup-at', String(Date.now())); } catch {}
 }
 function restorePlan(b) {
-  if (!b || b.app !== 'lekverkstan' || !Array.isArray(b.decks)) throw new Error('Filen är ingen säkerhetskopia från Lekverkstan');
+  if (!b || b.app !== 'lekverkstan' || !Array.isArray(b.decks)) throw new Error('Filen är ingen säkerhetskopia från Manakeep');
   const str = (v, n) => String(v ?? '').slice(0, n);
   const sig = d => str(d.name, 80) + '|' + JSON.stringify((d.cards || []).map(c => [String(c?.name), c?.qty | 0, c?.board]).sort());
   const have = new Set(S.decks.map(sig)), ids = new Set(S.decks.map(d => d.id));

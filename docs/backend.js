@@ -1,4 +1,4 @@
-// Molnläge för Lekverkstan (GitHub Pages + Supabase).
+// Molnläge för Manakeep (GitHub Pages + Supabase).
 // Körs appen från den lokala servern (port 8793 eller tunneln) används server.js som förut.
 // Annars ersätts appens api()-anrop med Supabase och Scryfall direkt från webbläsaren.
 'use strict';
@@ -112,7 +112,7 @@
     el.className = 'auth';
     el.innerHTML = `
       <div class="card auth-box">
-        <div class="brand" style="justify-content:center;font-size:1.3rem;margin-bottom:.8rem"><img src="icon.svg" alt=""> Lekverkstan</div>
+        <div class="brand" style="justify-content:center;font-size:1.3rem;margin-bottom:.8rem"><img src="icon.svg" alt=""> Manakeep</div>
         <div class="tabs" style="margin-top:0"><button data-m="in" class="on">Logga in</button><button data-m="up">Skapa konto</button></div>
         <form>
           <p><input type="email" name="email" placeholder="E-post" autocomplete="email" required style="width:100%"></p>
