@@ -8,7 +8,7 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
-  let v2 = false, v4 = false, v7 = false, v8 = false, v10 = false, v11 = false, v12 = false;
+  let v2 = false, v4 = false, v7 = false, v8 = false, v10 = false, v11 = false, v12 = false, v13 = false;
   const colQty = {}; // egna antal, för att veta när ett kort läggs till (sortering på senast inlagt)
   let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
@@ -246,6 +246,8 @@
       v11 = !(await sb.from('lv_groups').select('id').limit(0)).error;
       // v12: gruppkoden fungerar som inbjudan, turneringsmatcher
       v12 = v11 && !(await sb.from('lv_groups').select('signup').limit(0)).error;
+      // v13: turneringar i molnet
+      v13 = v12 && !(await sb.from('lv_tournaments').select('id').limit(0)).error;
       // användare som går att välja som spelare (bara de som har ett namn)
       const us = v10 ? await sb.from('lv_profiles').select('user_id, display_name').neq('display_name', '').limit(500) : { data: [] };
       v7 = !ev.error && !sh.error;
@@ -260,7 +262,7 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
-        v3: !w.error, v4, v6: !bu.error, v7, v8, v10, v11, v12,
+        v3: !w.error, v4, v6: !bu.error, v7, v8, v10, v11, v12, v13,
         users: (us.data || []).map(r => ({ id: r.user_id, name: String(r.display_name || '').trim().slice(0, 20) })).filter(u => u.name),
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
         profile: { id: user.id, name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games, wants: !!wa.data?.share_wants },
@@ -327,6 +329,29 @@
     if (grm && grm[2] === '/kick' && m === 'POST') { await rpc('lv_group_kick', { p_group: grm[1], p_user: body.user }); return { ok: true }; }
     if (grm && !grm[2] && m === 'PUT') { await rpc('lv_group_update', { p_group: grm[1], p_name: String(body.name || ''), p_new_code: !!body.newCode, ...(v12 && typeof body.signup === 'boolean' ? { p_signup: body.signup } : {}) }); return { ok: true }; }
     if (grm && !grm[2] && m === 'DELETE') { await rpc('lv_group_delete', { p_group: grm[1] }); return { ok: true }; }
+
+    // ---------- turneringar (v13) ----------
+    if (p === '/api/tournaments' && m === 'GET') {
+      if (!v13) return [];
+      const [t, pl] = await Promise.all([
+        sb.from('lv_tournaments').select('*').order('created', { ascending: false }).limit(50),
+        sb.from('lv_tour_players').select('*'),
+      ]);
+      fail(t.error); fail(pl.error);
+      const nm = await names(pl.data.map(x => x.user_id));
+      return t.data.map(x => ({ ...x, mine: x.owner === user.id,
+        players: pl.data.filter(y => y.tour_id === x.id).map(y => ({ id: y.user_id, name: String(nm[y.user_id] || 'Okänd').slice(0, 20), status: y.status, deck_id: y.deck_id, deck_name: y.deck_name, me: y.user_id === user.id, owner: y.user_id === x.owner })) }));
+    }
+    if (p === '/api/tournaments' && m === 'POST') {
+      return { id: await rpc('lv_tour_create', { p_name: String(body.name || 'Turnering').trim().slice(0, 60) || 'Turnering', p_kind: body.kind === 'pod' ? 'pod' : 'duel',
+        p_life: [20, 25, 30, 40].includes(+body.life) ? +body.life : 20, p_rounds: Math.max(1, Math.min(8, body.rounds | 0 || 3)), p_players: (body.players || []).slice(0, 31), p_deck: body.deck || null }) };
+    }
+    const tm = p.match(/^\/api\/tournaments\/([0-9a-f-]{36})(\/respond|\/start|\/log)?$/);
+    if (tm && tm[2] === '/respond' && m === 'POST') { await rpc('lv_tour_respond', { p_tour: tm[1], p_accept: !!body.accept, p_deck: body.deck || null }); return { ok: true }; }
+    if (tm && tm[2] === '/start' && m === 'POST') return { ver: await rpc('lv_tour_start', { p_tour: tm[1], p_state: body.state, p_rounds: body.rounds | 0 || null }) };
+    if (tm && tm[2] === '/log' && m === 'POST') return { added: await rpc('lv_tour_log', { p_tour: tm[1], p_round: body.round | 0, p_index: body.index | 0 }) };
+    if (tm && !tm[2] && m === 'PUT') return { ver: await rpc('lv_tour_save', { p_tour: tm[1], p_state: body.state, p_ver: body.ver | 0, p_done: !!body.done, p_rounds: body.rounds | 0 || null }) };
+    if (tm && !tm[2] && m === 'DELETE') { await rpc('lv_tour_delete', { p_tour: tm[1] }); return { ok: true }; }
 
     if (p === '/api/events' && m === 'GET') {
       if (!v7) return [];

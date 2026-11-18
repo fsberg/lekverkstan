@@ -642,3 +642,8 @@ th { color: color-mix(in srgb, var(--gold) 55%, var(--text-2)); }
   .top nav a.on { box-shadow: inset 3px 0 0 var(--accent); }
 }
 @media (prefers-reduced-motion: reduce) { .menu-btn span { transition: none; } }
+
+/* turneringar */
+.tour-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .1rem .8rem; }
+.tour-pick .chk { margin-top: .35rem; }
+.tour-tile .body { margin-top: 0; }

@@ -2265,7 +2265,7 @@ function deckRecord(games) {
 }
 function viewGames(sub, arg) {
   if (sub === 'analys') return viewAnalysis(arg ? decodeURIComponent(arg) : '');
-  if (sub === 'turnering') return viewTourPage();
+  if (sub === 'turnering') return viewTourPage(arg);
   if (S.cloud && S.v7 && ['grupp', 'topplista', 'spelkvall'].includes(sub)) return viewGroup();
   setNav('matcher');
   const today = new Date().toISOString().slice(0, 10);
@@ -2727,7 +2727,7 @@ async function wakeLock(on) {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && location.hash.startsWith('#/liv') && lifeState()?.players) wakeLock(true); });
 const isOut = (p, s) => p.life <= 0 || p.poison >= 10 || s.players.some((_, j) => (p.cmd[j] || 0) >= 21);
 const roomCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 32]).join('');
-const shared = ['setup', 'start', 'players', 'seats', 'starter', 'marks'];
+const shared = ['setup', 'start', 'players', 'seats', 'starter', 'marks', 'tour'];
 // räknare per spelare, markörer som en spelare i taget har, och vanliga tokens
 const CTRS = [['energy', '⚡', 'Energi'], ['exp', '✦', 'Erfarenhet'], ['rad', '☢', 'Rad'], ['tax', '🔁', 'Befälhavarskatt']];
 const MARKS = [['monarch', '👑', 'Monark', 'Drar ett extra kort i slutet av sin tur. Den som gör stridsskada på monarken tar över.'], ['initiative', '🏰', 'Initiativ', 'Utforskar Undercity. Den som gör stridsskada på den som har initiativet tar över.']];
@@ -2770,7 +2770,9 @@ function cleanShared(st) {
   const marks = Object.fromEntries(MARKS.map(([k]) => [k, Number.isInteger(st.marks?.[k]) && st.marks[k] >= 0 && st.marks[k] < n ? st.marks[k] : null]));
   const setup = { n, life: num(st.setup?.life, 1, 999, 40), names: players.map(p => p.name), deck: '', share: true };
   const seats = Object.fromEntries(Object.entries(st.seats || {}).filter(([j]) => /^\d$/.test(j) && +j < n).map(([j, v]) => [j, String(v).slice(0, 20)]));
-  return { setup, start: num(st.start, 0, 9e15, Date.now()), players, seats, starter: st.starter == null ? undefined : num(st.starter, 0, n - 1), marks };
+  // turneringsparti: { id, r, i } följer med så att alla telefoner vet att resultatet hör till turneringen
+  const tour = st.tour && /^[0-9a-f-]{36}$/.test(st.tour.id) ? { id: st.tour.id, r: num(st.tour.r, 0, 7), i: num(st.tour.i, 0, 99) } : undefined;
+  return { setup, start: num(st.start, 0, 9e15, Date.now()), players, seats, starter: st.starter == null ? undefined : num(st.starter, 0, n - 1), marks, tour };
 }
 function applyOp(s, op) {
   if (!op || typeof op.id !== 'string' || !['life', 'poison', 'cmd', 'ctr', 'tok', 'mark'].includes(op.k)) return false;
@@ -2980,6 +2982,11 @@ function viewLife(code) {
     clearTimeout(viewLife.t); viewLife.t = setTimeout(() => { if (!lifeState()?.players && room.ch) roomSend({ t: 'hello' }); }, 3000);
     $('#lQuit').onclick = () => { roomLeave(); lifeState.s = { setup: s.setup }; saveLife(); location.hash = '#/matcher'; };
     return;
+  }
+  // turneringsparti: platsen väljs automatiskt efter kontot
+  if (s?.room && s.players && s.tour && (s.me == null || !s.players[s.me])) {
+    const i = s.players.findIndex(p => p.uid && p.uid === S.profile?.id);
+    if (i >= 0) { s.me = i; s.myDeck = ''; s.seats = { ...(s.seats || {}), [i]: CID }; saveLife(); roomSend({ t: 'seat', p: i, name: '' }); }
   }
   // välj vilken spelare man är (delad räknare)
   if (s?.room && s.players && (s.me == null || !s.players[s.me])) {
@@ -3229,14 +3236,16 @@ function lifeEnd() {
 async function lifeFinish(w, by) {
   const s = lifeState();
   if (!s?.players) return;
-  // parti i en turnering: resultatet går till turneringen, som själv sparar matchen i spelloggen
-  if (s.setup?.tour) {
-    if (w != null && typeof tourGameDone === 'function') tourGameDone(s.setup.tour, w === 'draw' ? 'draw' : +w);
+  // parti i en turnering: resultatet går till turneringen, som själv sparar matchen i allas spellogg
+  const tref = s.tour || s.setup?.tour;
+  if (tref) {
+    if (by) toast(w == null ? `${by} avbröt partiet` : 'Partiet är slut');
     else if (w == null) toast('Partiet avbröts');
-    lifeState.s = {}; saveLife();
+    else if (typeof tourGameDone === 'function') await tourGameDone(tref, w === 'draw' ? 'draw' : s.players[+w]?.uid);
+    roomLeave(); lifeState.s = {}; saveLife();
     if (!location.hash.startsWith('#/liv')) return;
     closeModal(); wakeLock(false); document.body.classList.remove('life-on');
-    location.hash = '#/matcher/turnering';
+    location.hash = '#/matcher/turnering/' + tref.id;
     return;
   }
   // en telefon: jag är den plats där mitt konto är valt (eller plats 1 utan konton). Är jag inte med sparas inget hos mig.
@@ -3665,6 +3674,7 @@ function notifications() {
     else if (at > evSeen) out.push({ at, href: '#/matcher/spelkvall', isNew: true, text: `${e.ownerName} bjuder in: ${e.title}`, sub: 'Säg vilka tider du kan' });
   }
   out.push(...alarmNotes());
+  if (typeof tourNotes === 'function') out.push(...tourNotes());
   const ls = lifeState();
   if (ls?.room && ls.players) out.push({ at: Date.now(), href: '#/liv/' + ls.room, isNew: false, text: 'Pågående delad match', sub: `Kod ${ls.room} · tryck för att gå tillbaka` });
   return out.sort((a, b) => b.isNew - a.isNew || b.at - a.at);
@@ -3716,6 +3726,7 @@ function syncNotes() {
   if (!S.cloud || S.offline) return;
   if (S.v4) loadBookings(true).then(updateBell);
   if (S.v7) loadEvents(true).then(updateBell);
+  if (S.v13 && typeof loadTours === 'function') loadTours(true).then(updateBell);
 }
 setInterval(() => { if (document.visibilityState === 'visible') syncNotes(); }, 120000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNotes(); });
@@ -4262,7 +4273,7 @@ addEventListener('hashchange', () => { $('#preview').hidden = true; render(); })
   Object.assign(S, st);
   if (!S.cloud) $$('[data-nav=utforska]').forEach(a => a.remove());
   if (S.cloud && lifeState()?.room) roomJoin(lifeState().room);
-  if (S.cloud && typeof tourState === 'function' && tourState()?.room) tourConnect(tourState().room);
+  if (S.cloud && S.v13 && !S.offline && typeof loadTours === 'function') loadTours().then(updateBell);
   if (S.cloud && S.v4 && !S.offline) loadBookings().then(() => location.hash.startsWith('#/utforska') && render());
   if (S.cloud && S.v7 && !S.offline) loadEvents().then(updateBell);
   if (S.cloud && !S.offline && !S.profile?.name) setTimeout(askName, 600);
