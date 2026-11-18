@@ -1,28 +1,28 @@
 :root {
-  --bg: #f6f5f9; --surface: #ffffff; --surface-2: #efedf4; --border: #dcd8e5;
-  --text: #1d1a26; --text-2: #5a5568; --muted: #8a8597;
-  --accent: #5b3fd0; --accent-ink: #ffffff; --accent-soft: #e9e4fb;
+  --bg: #f5f1f8; --surface: #fffdfb; --surface-2: #efe8f3; --border: #ddd2e6;
+  --text: #1e1530; --text-2: #594c6e; --muted: #8b809b;
+  --accent: #5e2db8; --accent-ink: #ffffff; --accent-soft: #ebe1fa;
   --good: #1f7a45; --warn: #9a6200; --bad: #b3261e;
-  --bar: #5b3fd0; --gold: #b78a1d;
+  --bar: #5e2db8; --gold: #a8780e;
   --radius: 10px; --shadow: 0 1px 3px rgba(20, 10, 40, .08);
 }
 /* mörkt tema: följer telefonen, om man inte valt ljust eller mörkt under Inställningar */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #14121b; --surface: #1d1a27; --surface-2: #272334; --border: #363047;
-    --text: #ecebf2; --text-2: #b3aec2; --muted: #857f96;
-    --accent: #9d86ff; --accent-ink: #14121b; --accent-soft: #2c2547;
-    --good: #5fcf8c; --warn: #e7b04a; --bad: #ff7b72;
-    --bar: #9d86ff; --gold: #e0b84c;
+    --bg: #110a1f; --surface: #1a1030; --surface-2: #24173f; --border: #392a5a;
+    --text: #f1ebfa; --text-2: #bcaed3; --muted: #8a7ba3;
+    --accent: #f0b93a; --accent-ink: #1a0f2e; --accent-soft: #3a2a18;
+    --good: #6fd49a; --warn: #f0b93a; --bad: #ff7b72;
+    --bar: #b07cff; --gold: #f0b93a;
     --shadow: none;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #14121b; --surface: #1d1a27; --surface-2: #272334; --border: #363047;
-  --text: #ecebf2; --text-2: #b3aec2; --muted: #857f96;
-  --accent: #9d86ff; --accent-ink: #14121b; --accent-soft: #2c2547;
-  --good: #5fcf8c; --warn: #e7b04a; --bad: #ff7b72;
-  --bar: #9d86ff; --gold: #e0b84c;
+  --bg: #110a1f; --surface: #1a1030; --surface-2: #24173f; --border: #392a5a;
+  --text: #f1ebfa; --text-2: #bcaed3; --muted: #8a7ba3;
+  --accent: #f0b93a; --accent-ink: #1a0f2e; --accent-soft: #3a2a18;
+  --good: #6fd49a; --warn: #f0b93a; --bad: #ff7b72;
+  --bar: #b07cff; --gold: #f0b93a;
   --shadow: none;
 }
 /* ---------- färgteman efter Magics fem färger (väljs under Inställningar) ---------- */
@@ -529,3 +529,96 @@ a.btn { text-decoration: none; }
 .pill.grp { font-size: .72rem; padding: 0 .4rem; opacity: .85; }
 #grpF { max-width: 11rem; }
 .tour-live { margin-bottom: .75rem; padding: .5rem .8rem; border: 1px dashed var(--border); border-radius: 10px; gap: .5rem; flex-wrap: wrap; }
+
+/* ================= Manakeep: borg & guld =================
+   Ligger sist och bygger bara på temats färger, så alla teman får samma stil. */
+@font-face { font-family: 'Cinzel'; font-style: normal; font-weight: 600 700; font-display: swap; src: url(fonts/cinzel-latin.woff2) format('woff2'); }
+:root {
+  --radius: 14px;
+  --display: 'Cinzel', Georgia, 'Times New Roman', serif;
+  --line: color-mix(in srgb, var(--gold) 28%, var(--border));
+  --line-strong: color-mix(in srgb, var(--gold) 60%, var(--border));
+  --glow: color-mix(in srgb, var(--accent) 35%, transparent);
+  --lift: 0 10px 28px -12px rgba(0, 0, 0, .45);
+}
+body {
+  background:
+    radial-gradient(1100px 520px at 50% -180px, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+    radial-gradient(700px 400px at 100% 100%, color-mix(in srgb, var(--bar) 10%, transparent), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+h1 { font-family: var(--display); font-weight: 700; letter-spacing: .02em; font-size: 1.6rem; }
+.card > h2:first-child, .card > .row:first-child > h2, .modal-box > h2:first-child { font-family: var(--display); font-weight: 700; letter-spacing: .02em; }
+
+/* menyraden: halvgenomskinlig, guldlinje i underkant */
+.top {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3); backdrop-filter: blur(12px) saturate(1.3);
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, transparent, var(--line-strong), transparent) 1;
+}
+.brand { font-family: var(--display); font-size: 1.15rem; letter-spacing: .06em; }
+.brand img { width: 32px; height: 32px; border-radius: 8px; box-shadow: 0 0 0 1px var(--line-strong), 0 0 14px -2px var(--glow); }
+.top nav a { border-radius: 10px; transition: background .15s, color .15s; }
+.top nav a:hover { color: var(--text); background: var(--surface-2); }
+.top nav a.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* kort: tunn guldkant, ljus överkant */
+.card { border-color: var(--line); box-shadow: var(--shadow), inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent); }
+.modal-box { border: 1px solid var(--line-strong); box-shadow: var(--lift); }
+.modal { -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+
+/* lekbrickor: större bild som tonar ut, lyfts och glöder vid hover */
+.deck-grid { gap: 1.1rem; }
+.deck-tile { position: relative; transition: transform .18s ease, box-shadow .18s ease, border-color .18s; }
+.deck-tile .art { height: 150px; position: relative; }
+.deck-tile .art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, var(--surface) 100%); }
+.deck-tile .body { margin-top: -1.6rem; position: relative; }
+.deck-tile .body > b:first-child { font-family: var(--display); font-size: 1.05rem; letter-spacing: .02em; display: block; }
+.deck-tile:hover { transform: translateY(-3px); border-color: var(--line-strong); box-shadow: var(--lift), 0 0 0 1px var(--line-strong), 0 0 26px -6px var(--glow); }
+
+/* knappar */
+.btn { border-radius: 10px; border-color: var(--line); transition: border-color .15s, box-shadow .15s, transform .1s; }
+.btn:hover { border-color: var(--line-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, #fff), var(--accent) 55%, color-mix(in srgb, var(--accent) 82%, #000));
+  border-color: color-mix(in srgb, var(--accent) 70%, #000);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .25) inset, 0 4px 14px -6px var(--glow);
+}
+.btn.primary:hover { box-shadow: 0 1px 0 rgba(255, 255, 255, .25) inset, 0 6px 20px -6px var(--accent); }
+input[type=text], input[type=search], input[type=number], input[type=url], input[type=email], input[type=password], select, textarea { border-radius: 10px; border-color: var(--line); }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent); }
+
+/* flikar och val */
+.tabs { border-bottom-color: var(--line); }
+.tabs a, .tabs button { transition: color .15s; }
+.tabs a:hover, .tabs button:hover { color: var(--text); }
+.tabs a.on, .tabs button.on { border-image: linear-gradient(90deg, transparent, var(--accent), transparent) 1; }
+.seg { border-color: var(--line); border-radius: 10px; }
+.seg button + button { border-left-color: var(--line); }
+.pill { border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+th { color: color-mix(in srgb, var(--gold) 55%, var(--text-2)); }
+.ownbar { height: 5px; }
+.ownbar div { background: linear-gradient(90deg, color-mix(in srgb, var(--good) 70%, var(--gold)), var(--good)); }
+.toast { border-radius: 12px; box-shadow: var(--lift); border: 1px solid var(--line-strong); }
+.empty { border-style: dashed; }
+
+/* inloggning: stor logga med glöd */
+.auth { background:
+    radial-gradient(600px 420px at 50% 30%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    var(--bg); }
+.auth-box { border-color: var(--line-strong); box-shadow: var(--lift), 0 0 40px -10px var(--glow); padding: 1.6rem 1.4rem; }
+.auth-box .brand { flex-direction: column; gap: .6rem; font-size: 1.6rem !important; }
+.auth-box .brand img { width: 88px; height: 88px; border-radius: 20px; box-shadow: 0 0 0 1px var(--line-strong), 0 0 40px -4px var(--glow); }
+
+@media (max-width: 600px) {
+  h1 { font-size: 1.35rem; }
+  .deck-tile .art { height: 130px; }
+  .brand { font-size: 1.05rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deck-tile, .btn, .top nav a { transition: none; }
+  .deck-tile:hover { transform: none; }
+}
