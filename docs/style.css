@@ -376,3 +376,26 @@ tr.few { opacity: .55; }
 .dpairs li { padding: .6rem 0; }
 .dstand { width: 100%; border-collapse: collapse; font-size: .9rem; } .dstand th, .dstand td { text-align: left; padding: .35rem .3rem; border-bottom: 1px solid var(--border); }
 .dstand tr.win td { color: var(--good); font-weight: 700; }
+
+/* ---------- lugnare utseende ---------- */
+.tabs, .top nav { scrollbar-width: none; }
+.tabs::-webkit-scrollbar, .top nav::-webkit-scrollbar { display: none; }
+/* långa förklaringar ligger bakom ⓘ (Inställningar → Visa förklaringar direkt) */
+details.help { margin: .35rem 0; }
+details.help > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: .3rem; color: var(--text-2); font-size: .8rem; opacity: .75; user-select: none; }
+details.help > summary::-webkit-details-marker { display: none; }
+details.help > summary:hover { opacity: 1; }
+details.help[open] > summary { opacity: 1; }
+details.help > p { margin: .3rem 0 0; }
+@media (max-width: 720px) {
+  main { padding: .75rem; }
+  .card { padding: .85rem; }
+  .grid { gap: .75rem; }
+  h1 { font-size: 1.35rem; }
+}
+.ihelp { border: 0; background: none; color: var(--text-2); cursor: pointer; font-size: .85em; margin-left: .4rem; padding: 0 .2rem; opacity: .7; vertical-align: middle; font-weight: 400; }
+.ihelp:hover, .ihelp[aria-expanded="true"] { opacity: 1; color: var(--accent); }
+.chk { display: flex; gap: .5rem; align-items: center; margin-top: .7rem; font-size: .9rem; flex-wrap: wrap; }
+.chk input[type=checkbox] { margin: 0; width: auto; }
+.settings h1 { margin-bottom: 0; }
+a.btn { text-decoration: none; }

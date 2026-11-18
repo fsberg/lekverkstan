@@ -477,6 +477,27 @@ document.addEventListener('click', e => {
 });
 
 // ---------- vyer ----------
+// ---------- lugnare sidor: långa förklaringar fälls ihop bakom ⓘ ----------
+const helpOpen = () => { try { return localStorage.getItem('lv-help') === '1'; } catch { return false; } };
+function tidyHelp(root) {
+  if (!root || helpOpen()) return;
+  for (const p of root.querySelectorAll('p.muted.small')) {
+    if (p.dataset.h || p.closest('details.help, .nohelp, .life')) continue;
+    p.dataset.h = '1';
+    if (p.textContent.trim().length < 90 || p.querySelector('input, select, button, textarea')) continue;
+    const h = p.previousElementSibling;
+    if (h && /^H[1-3]$/.test(h.tagName) && !h.querySelector('.ihelp')) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'ihelp'; b.textContent = 'ⓘ'; b.title = 'Så fungerar det'; b.setAttribute('aria-expanded', 'false');
+      b.onclick = () => { p.hidden = !p.hidden; b.setAttribute('aria-expanded', String(!p.hidden)); };
+      p.hidden = true; h.appendChild(b); continue;
+    }
+    const d = document.createElement('details'); d.className = 'help';
+    d.innerHTML = '<summary>ⓘ Så fungerar det</summary>';
+    p.replaceWith(d); d.appendChild(p);
+  }
+}
+new MutationObserver(() => { cancelAnimationFrame(tidyHelp.raf); tidyHelp.raf = requestAnimationFrame(() => tidyHelp($('#app'))); }).observe($('#app'), { childList: true, subtree: true });
+
 function setNav(which) {
   $$('.top nav a').forEach(a => {
     a.classList.toggle('on', a.dataset.nav === which);
@@ -1722,34 +1743,38 @@ function viewCollection() {
 // --- Inställningar ---
 function viewSettings() {
   setNav('installningar');
-  $('#app').innerHTML = `<div class="card" style="max-width:640px"><h1>Inställningar</h1>
-    <h3>Utseende</h3>
-    <div class="seg" id="themeSeg" role="group" aria-label="Tema">${[['auto', 'Som telefonen'], ['light', '☀️ Ljust'], ['dark', '🌙 Mörkt']].map(([k, l]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    ${S.cloud ? `<h3>Ditt namn</h3>
-    <p class="small muted">Syns för ${S.v11 ? 'dem i dina grupper' : 'andra inloggade'} på dina publika lekar och i bytesbörsen. Inloggad som ${esc(S.profile.email || '')}.</p>
-    <div class="row"><input type="text" id="dispName" maxlength="40" placeholder="T.ex. Jonte" style="flex:1" value="${esc(S.profile.name || '')}"><button class="btn primary" id="saveName">Spara namn</button></div>` : ''}
-    ${S.cloud && S.v11 ? `<h3>Grupper</h3><div id="groups"><p class="small muted">Laddar grupper…</p></div>` : ''}
-    ${S.cloud && S.v8 ? `<h3>Bytesförslag</h3>
-    <label class="small row"><input type="checkbox" id="shareWants" ${S.profile.wants ? 'checked' : ''}> Visa vad jag saknar för den som har kortet till byte</label>
-    <p class="small muted">Den som har ett kort till byte som saknas i dina lekar eller står på din önskelista får se det under Bytesförslag. Inget annat i din samling eller önskelista visas.</p>` : ''}
-    <h3>Säkerhetskopia</h3>
-    <p class="small muted">Ladda ner lekar, samling, utgåvor, önskelista, utlånat och spellogg som en fil. Spara den i molnet eller på datorn. Inläsning lägger bara till det som saknas.
-      ${(t => t ? `Senast nedladdad ${new Date(t).toLocaleDateString('sv-SE')}.` : 'Ingen kopia nedladdad från den här enheten än.')((() => { try { return +localStorage.getItem('lv-backup-at') || 0; } catch { return 0; } })())}</p>
-    <div class="row"><button class="btn" id="bkDown">⬇ Ladda ner säkerhetskopia</button><label class="btn">⬆ Läs in fil<input type="file" id="bkFile" accept=".json,application/json" hidden></label></div>
-    <h3>Installera som app</h3>
-    ${window.matchMedia?.('(display-mode: standalone)').matches ? '<p class="small good">Lekverkstan körs redan som installerad app.</p>'
+  const backupAt = (() => { try { return +localStorage.getItem('lv-backup-at') || 0; } catch { return 0; } })();
+  $('#app').innerHTML = `<div class="grid settings" style="max-width:640px"><h1>Inställningar</h1>
+    <div class="card"><h2>Utseende</h2>
+      <div class="seg" id="themeSeg" role="group" aria-label="Tema">${[['auto', 'Som telefonen'], ['light', '☀️ Ljust'], ['dark', '🌙 Mörkt']].map(([k, l]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <label class="chk"><input type="checkbox" id="helpAll" ${helpOpen() ? 'checked' : ''}> Visa förklaringar direkt i stället för bakom ⓘ</label></div>
+    ${S.cloud ? `<div class="card"><h2>Ditt namn</h2>
+      <p class="small muted">Syns för ${S.v11 ? 'dem i dina grupper' : 'andra inloggade'} på dina publika lekar, i bytesbörsen och i livräknaren. Du är inloggad som ${esc(S.profile.email || '')}.</p>
+      <div class="row"><input type="text" id="dispName" maxlength="40" placeholder="T.ex. Jonte" style="flex:1" value="${esc(S.profile.name || '')}"><button class="btn primary" id="saveName">Spara</button></div></div>` : ''}
+    ${S.cloud && S.v11 ? `<div class="card"><h2>Grupper</h2>
+      <p class="small muted">Dina publika lekar, bytesbörsen, ditt namn, spelkvällar, topplistan och bytesförslag syns bara för dem du delar en grupp med. Bjud in någon genom att ge hen gruppens kod.</p>
+      <div id="groups"><p class="small muted">Laddar grupper…</p></div></div>` : ''}
+    ${S.cloud && S.v8 ? `<div class="card"><h2>Bytesförslag</h2>
+      <p class="small muted">Den som har ett kort till byte som saknas i dina lekar eller står på din önskelista får se det under Bytesförslag. Inget annat i din samling eller önskelista visas.</p>
+      <label class="chk"><input type="checkbox" id="shareWants" ${S.profile.wants ? 'checked' : ''}> Visa vad jag saknar för den som har kortet till byte</label></div>` : ''}
+    <div class="card"><h2>Priser</h2>
+      <p class="small muted">Priserna kommer från Cardmarket via Scryfall och gäller billigaste utgåvan, eller den utgåva du angett i samlingen, omräknat med dagens kurs (1 € = ${S.rate.toLocaleString('sv-SE')} kr).
+        <b>Svensk butik</b> lägger på 30 %, ungefär vad Alara tar mer för samma utgåva. <b>Cardmarket</b> visar vad korten kostar där, utan frakt. Priserna hämtas om var tredje dag.
+        Prislarmen syns i klockan. ${S.v7 ? `Kort du äger jämförs med värdet för en vecka sedan och måste ha stigit minst ${ALARM_MIN_KR} kr. ` : ''}Önskekort jämförs med det högsta priset sedan du senast markerade larmet som läst.
+        Alara-priser hämtas från butikens öppna sidor, cachas i 6 timmar och visar bara varianter som finns i lager.</p>
+      <div class="seg" id="priceSeg" role="group" aria-label="Prisnivå">${[['butik', 'Svensk butik'], ['cm', 'Cardmarket']].map(([k, l]) => `<button data-price-set="${k}" class="${S.priceLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <label class="chk">Prislarm när ett kort ändras minst
+        <select id="alarmSel">${[[0, 'Av'], [15, '15 %'], [25, '25 %'], [50, '50 %']].map(([v, l]) => `<option value="${v}" ${alarmPct() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
+    <div class="card"><h2>Säkerhetskopia</h2>
+      <p class="small muted">Ladda ner lekar, samling, utgåvor, önskelista, utlånat och spellogg som en fil. Spara den i molnet eller på datorn. Inläsning lägger bara till det som saknas, inget tas bort.</p>
+      <div class="row"><button class="btn" id="bkDown">⬇ Ladda ner</button><label class="btn">⬆ Läs in fil<input type="file" id="bkFile" accept=".json,application/json" hidden></label></div>
+      <p class="small muted" style="margin-bottom:0">${backupAt ? `Senast nedladdad ${new Date(backupAt).toLocaleDateString('sv-SE')}.` : 'Ingen kopia nedladdad från den här enheten än.'}</p></div>
+    <div class="card"><h2>Installera som app</h2>
+    ${window.matchMedia?.('(display-mode: standalone)').matches ? '<p class="small good" style="margin:0">Lekverkstan körs redan som installerad app.</p>'
       : installEvt ? '<p class="small muted">Lägg Lekverkstan på hemskärmen. Den startar då som en vanlig app och lekarna går att titta på utan nät.</p><button class="btn primary" id="install">Installera</button>'
-      : '<p class="small muted">På iPhone: tryck på Dela-knappen i Safari och välj <b>Lägg till på hemskärmen</b>. På Android: öppna menyn i Chrome och välj <b>Installera app</b> eller <b>Lägg till på startskärmen</b>.</p>'}
-    <h3>Priser</h3>
-    <div class="seg" id="priceSeg" role="group" aria-label="Prisnivå">${[['butik', 'Svensk butik'], ['cm', 'Cardmarket']].map(([k, l]) => `<button data-price-set="${k}" class="${S.priceLevel === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    <p class="small muted">Priserna kommer från Cardmarket via Scryfall och gäller billigaste utgåvan, eller den utgåva du angett i samlingen. De räknas om till kronor med dagens kurs, 1 € = ${S.rate.toLocaleString('sv-SE')} kr.
-      <b>Svensk butik</b> lägger på 30 %, ungefär vad Alara tar mer för samma utgåva. <b>Cardmarket</b> visar vad korten kostar där, utan frakt. Priserna hämtas om var tredje dag.</p>
-    <h3>Prislarm</h3>
-    <label class="small">Säg till när ett kort jag äger stiger, eller ett önskekort blir billigare, med minst
-      <select id="alarmSel">${[[0, 'Av'], [15, '15 %'], [25, '25 %'], [50, '50 %']].map(([v, l]) => `<option value="${v}" ${alarmPct() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-    <p class="small muted">Larmen syns i klockan. ${S.v7 ? `Kort du äger jämförs med värdet för en vecka sedan och måste ha stigit minst ${ALARM_MIN_KR} kr. ` : ''}Önskekort jämförs med det högsta priset sedan du senast markerade larmet som läst.</p>
-    <p class="small muted">Alara-priser hämtas från butikens öppna sidor, cachas i 6 timmar och visar bara varianter som finns i lager. Cardmarket har inget öppet API för privatpersoner, därför används en önskelista plus deras egen Shopping Wizard.</p>
+      : '<p class="small" style="margin:0">På iPhone: tryck på Dela i Safari och välj <b>Lägg till på hemskärmen</b>. På Android: öppna menyn i Chrome och välj <b>Installera app</b>.</p>'}</div>
   </div>`;
+  $('#helpAll').onchange = e => { try { localStorage.setItem('lv-help', e.target.checked ? '1' : '0'); } catch {} render(); };
   $('#themeSeg').onclick = e => { const b = e.target.closest('[data-theme-set]'); if (b) { setTheme(b.dataset.themeSet); render(); } };
   $('#alarmSel').onchange = e => { try { localStorage.setItem('lv-alarm', String(+e.target.value)); } catch {} updateBell(); };
   $('#bkDown').onclick = () => { downloadBackup(); toast('Säkerhetskopian laddas ner'); setTimeout(render, 300); };
@@ -1781,8 +1806,7 @@ async function renderGroups() {
   try { gs = await api('/api/groups'); } catch (e) { box.innerHTML = `<p class="bad small">Kunde inte ladda grupperna: ${esc(e.message)}</p>`; return; }
   if (!document.body.contains(box)) return;
   const who = u => esc(u.name || 'Utan namn') + (u.me ? ' (du)' : '') + (u.owner ? ' ★' : '');
-  box.innerHTML = `<p class="small muted">Dina publika lekar, bytesbörsen, ditt namn, spelkvällar, topplistan och bytesförslag syns bara för dem du delar en grupp med. Bjud in någon genom att ge hen gruppens kod.</p>
-    ${gs.length ? gs.map(g => `<div class="card" data-grp="${g.id}" style="padding:.6rem .8rem;margin:.5rem 0">
+  box.innerHTML = `${gs.length ? gs.map(g => `<div class="card" data-grp="${g.id}" style="padding:.6rem .8rem;margin:.5rem 0">
       <div class="row"><b style="flex:1">${esc(g.name)}</b><span class="small muted">${g.members.length} ${g.members.length === 1 ? 'medlem' : 'medlemmar'}${g.mine ? ' · du är ägare' : ''}</span></div>
       <div class="row small" style="flex-wrap:wrap;gap:.3rem;margin:.4rem 0">${g.members.map(u => `<span class="pill">${who(u)}${g.mine && !u.me ? ` <button class="icon-btn" data-gkick="${u.id}" data-gname="${esc(u.name || 'Utan namn')}" title="Ta bort ur gruppen" style="padding:0 .2rem">✕</button>` : ''}</span>`).join('')}</div>
       ${g.mine ? `<div class="row small" style="flex-wrap:wrap">Kod: <code style="font-size:1rem;letter-spacing:.05em">${esc(g.code)}</code>
@@ -2182,8 +2206,7 @@ function deckRecord(games) {
 function viewGames(sub, arg) {
   if (sub === 'analys') return viewAnalysis(arg ? decodeURIComponent(arg) : '');
   if (sub === 'turnering') return viewTourPage();
-  sub = S.cloud && S.v7 && ['topplista', 'spelkvall'].includes(sub) ? sub : '';
-  if (sub) return viewGroup(sub);
+  if (S.cloud && S.v7 && ['grupp', 'topplista', 'spelkvall'].includes(sub)) return viewGroup();
   setNav('matcher');
   const today = new Date().toISOString().slice(0, 10);
   const byDeck = {};
@@ -2191,7 +2214,7 @@ function viewGames(sub, arg) {
   const stats = Object.values(byDeck).map(x => ({ ...x, ...deckRecord(x.games) })).sort((a, b) => b.n - a.n);
   const total = deckRecord(S.games);
   $('#app').innerHTML = `<div id="gm"><div class="row"><h1>Spela</h1><span class="spacer"></span><span class="muted">${total.n} matcher · ${total.pct} % vinster</span>
-      <a class="btn primary" href="#/liv">▶ Livräknare${lifeState()?.players ? ' (pågår)' : ''}</a></div>
+      <a class="btn small" href="#/matcher/analys">Analys</a></div>
     ${gameTabs('')}
     <div class="grid cols-2" style="margin-top:1rem">
       <div class="grid" style="align-content:start">
@@ -2319,7 +2342,7 @@ function viewAnalysis(sel) {
   const last10 = deckRecord(asc.slice(-10));
   if (asc.length >= 15) tips.push(`Senaste 10 matcherna: ${last10.pct} % vinster, mot ${tot.pct} % totalt.`);
   if (perDeck.length >= 2) { const s = perDeck.filter(r => r.n >= 3).sort((a, b) => b.pct - a.pct); if (s.length >= 2) tips.push(`Bästa leken är <b>${esc(s[0].label)}</b> (${s[0].pct} % på ${s[0].n} matcher).`); }
-  $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs('analys')}
+  $('#app').innerHTML = `<div class="row"><a href="#/matcher" class="icon-btn" aria-label="Tillbaka">←</a><h1>Analys</h1></div>${gameTabs('')}
     <div class="row" style="margin-top:1rem"><label class="small">Lek <select id="anDeck"><option value="">Alla lekar</option>${Object.entries(decks).sort((a, b) => a[1].localeCompare(b[1])).map(([k, n]) => `<option value="${esc(k)}" ${k === sel ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
       ${sel && !sel.startsWith('x:') && S.decks.some(d => d.id === sel) ? `<a class="btn small" href="#/lek/${esc(sel)}">Öppna leken</a>` : ''}</div>
     ${!games.length ? '<div class="card empty" style="margin-top:1rem">Inga matcher loggade än. Logga matcher under Mina matcher eller avsluta en match i livräknaren.</div>' : `
@@ -2920,7 +2943,7 @@ function viewLife(code) {
   if (!s || !s.players) {
     document.body.classList.remove('life-on');
     const last = s?.setup || { n: 4, life: 40, names: ['Jag', '', '', '', '', ''], deck: S.decks[0]?.id || '' };
-    $('#app').innerHTML = `<div class="card" style="max-width:520px;margin:0 auto"><div class="row"><a href="#/matcher" class="icon-btn" aria-label="Tillbaka">←</a><h1 style="margin:0">Livräknare</h1></div>
+    $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs('liv')}<div class="card" style="max-width:520px">
       <p class="row"><label class="small">Spelare<br><select id="lN">${[2, 3, 4, 5, 6].map(n => `<option ${n === last.n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
         <label class="small">Startliv<br><select id="lL">${[40, 30, 25, 20].map(n => `<option ${n === last.life ? 'selected' : ''}>${n}</option>`).join('')}</select></label></p>
       <div id="lNames"></div>
@@ -4059,17 +4082,18 @@ function tabEvents(el) {
     }
   });
 }
-function viewGroup(sub) {
+// Grupp: spelkvällar och topplistan på samma sida
+function viewGroup() {
   setNav('matcher');
-  $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs(sub)}<div id="grp"></div>`;
-  (sub === 'topplista' ? tabLeader : tabEvents)($('#grp'));
+  $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs('grupp')}<h2>Spelkvällar</h2><div id="grpE"></div><h2 style="margin-top:1.5rem">Topplista</h2><div id="grpL"></div>`;
+  tabEvents($('#grpE')); tabLeader($('#grpL'));
 }
 function viewTourPage() {
   setNav('matcher');
   $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs('turnering')}<div id="grp" style="margin-top:1rem"></div>`;
   tabTour($('#grp'));
 }
-const gameTabs = sub => `<div class="tabs">${[['', 'Mina matcher'], ['analys', 'Analys'], ['turnering', 'Turnering'], ...(S.cloud && S.v7 ? [['topplista', 'Topplista'], ['spelkvall', 'Spelkväll']] : [])].map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/matcher${k ? '/' + k : ''}">${l}</a>`).join('')}</div>`;
+const gameTabs = sub => `<div class="tabs">${[['liv', 'Livräknare', '#/liv'], ['', 'Matcher', '#/matcher'], ['turnering', 'Turnering', '#/matcher/turnering'], ...(S.cloud && S.v7 ? [['grupp', 'Grupp', '#/matcher/grupp']] : [])].map(([k, l, href]) => `<a class="${k === sub ? 'on' : ''}" href="${href}">${l}${k === 'liv' && lifeState()?.players ? ' ●' : ''}</a>`).join('')}</div>`;
 
 function render() {
   const h = location.hash.slice(1) || '/';
