@@ -1,8 +1,8 @@
 // Manakeep service worker: appen och kortbilder finns kvar utan nät.
 // Appens egna filer hämtas alltid från nätet först (så att uppdateringar syns direkt),
 // bibliotek och kortbilder tas från cachen först.
-const APP = 'lv-app-7', LIB = 'lv-lib-1', IMG = 'lv-img-1';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'tour.js', 'backend.js', 'config.js', 'icon.svg', 'manifest.webmanifest'];
+const APP = 'lv-app-8', LIB = 'lv-lib-1', IMG = 'lv-img-1';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'tour.js', 'backend.js', 'config.js', 'icon-96.png', 'favicon-32.png', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(APP).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

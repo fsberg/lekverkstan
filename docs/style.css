@@ -173,7 +173,7 @@ h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 
 .top { display: flex; align-items: center; gap: 1rem; padding: .6rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
 .brand { display: flex; gap: .5rem; align-items: center; font-weight: 700; text-decoration: none; color: var(--text); }
-.brand img { width: 26px; height: 26px; }
+.brand img { width: 28px; height: 28px; border-radius: 7px; }
 .top nav { display: flex; gap: .25rem; margin-left: auto; flex-wrap: wrap; }
 .top nav a { padding: .35rem .7rem; border-radius: 8px; text-decoration: none; color: var(--text-2); }
 .top nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }

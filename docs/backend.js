@@ -112,7 +112,7 @@
     el.className = 'auth';
     el.innerHTML = `
       <div class="card auth-box">
-        <div class="brand" style="justify-content:center;font-size:1.3rem;margin-bottom:.8rem"><img src="icon.svg" alt=""> Manakeep</div>
+        <div class="brand" style="justify-content:center;font-size:1.3rem;margin-bottom:.8rem"><img src="icon-96.png" alt=""> Manakeep</div>
         <div class="tabs" style="margin-top:0"><button data-m="in" class="on">Logga in</button><button data-m="up">Skapa konto</button></div>
         <form>
           <p><input type="email" name="email" placeholder="E-post" autocomplete="email" required style="width:100%"></p>
