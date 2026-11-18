@@ -622,3 +622,23 @@ th { color: color-mix(in srgb, var(--gold) 55%, var(--text-2)); }
   .deck-tile, .btn, .top nav a { transition: none; }
   .deck-tile:hover { transform: none; }
 }
+
+/* ---------- mobil: hamburgermeny ---------- */
+.menu-btn { display: none; position: relative; width: 2.5rem; height: 2.5rem; border: 1px solid var(--line); border-radius: 10px; background: transparent; cursor: pointer; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 0; }
+.menu-btn span { display: block; width: 1.15rem; height: 2px; border-radius: 2px; background: var(--text); transition: transform .2s, opacity .2s; }
+.menu-btn.has-badge::after { content: ''; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+.top.open .menu-btn span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.top.open .menu-btn span:nth-child(2) { opacity: 0; }
+.top.open .menu-btn span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+@media (max-width: 720px) {
+  .top { flex-wrap: nowrap; gap: .5rem; }
+  .menu-btn { display: inline-flex; order: 2; }
+  .bell { margin-left: auto; order: 1; }
+  .top nav { display: none; order: 3; position: absolute; top: 100%; left: 0; right: 0; width: auto; margin: 0;
+    flex-direction: column; flex-wrap: nowrap; gap: .15rem; overflow: auto; max-height: calc(100dvh - 4rem);
+    padding: .5rem .75rem .9rem; background: var(--surface); border-bottom: 1px solid var(--line-strong); box-shadow: var(--lift); }
+  .top.open nav { display: flex; }
+  .top nav a { padding: .8rem 1rem; font-size: 1.05rem; box-shadow: none; }
+  .top nav a.on { box-shadow: inset 3px 0 0 var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) { .menu-btn span { transition: none; } }

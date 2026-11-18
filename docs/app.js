@@ -2281,7 +2281,7 @@ function viewGames(sub, arg) {
         <div class="card"><h2>Per lek</h2>${stats.length ? `<table><thead><tr><th>Lek</th><th class="num">Matcher</th><th class="num">V–F–O</th><th class="num">Vinst</th></tr></thead><tbody>
           ${stats.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${s.n}</td><td class="num">${s.win}–${s.loss}–${s.draw}</td><td class="num"><b>${s.pct} %</b></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Inga matcher loggade än.</p>'}</div>
         <div class="card"><h2>Senaste matcherna</h2>${S.games.length ? `<div class="table-scroll"><table><thead><tr><th>Datum</th><th>Lek</th><th>Resultat</th><th>Mot</th><th></th></tr></thead><tbody>
-          ${S.games.slice(0, 100).map(g => `<tr><td class="small">${esc(g.played_on)}</td><td>${g.logged_by && !g.deck_id ? `<button class="btn small" data-editg="${esc(g.id)}" title="Loggad av någon annan – välj vilken lek du spelade">Välj lek</button>` : esc(g.deck_name)}</td>
+          ${S.games.slice(0, 100).map(g => `<tr><td class="small">${esc(g.played_on)}</td><td>${g.logged_by && !g.deck_id && (!g.deck_name || g.deck_name === 'Ingen lek vald') ? `<button class="btn small" data-editg="${esc(g.id)}" title="Loggad av någon annan – välj vilken lek du spelade">Välj lek</button>` : esc(g.deck_name)}</td>
             <td><span class="pill ${g.result === 'win' ? 'good' : g.result === 'loss' ? 'bad' : ''}">${RES_SV[g.result]}</span> <span class="muted small">${g.players} sp.</span></td>
             <td class="small">${esc(g.opponents)}${g.notes ? `<div class="muted">${esc(g.notes)}</div>` : ''}</td>
             <td style="white-space:nowrap"><button class="icon-btn" data-editg="${esc(g.id)}" title="Ändra" aria-label="Ändra matchen">✎</button><button class="icon-btn" data-delg="${esc(g.id)}" title="Ta bort" aria-label="Ta bort matchen">✕</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Här hamnar dina matcher.</p>'}</div>
@@ -3680,6 +3680,20 @@ function drawNotes() {
     updateWishBadge(); updateBookBadge(); updateBell();
   };
 }
+// mobil: menyn fälls ut från ☰-knappen och stängs när man valt något
+(() => {
+  const top = $('.top'), btn = $('#menuBtn'), nav = $('.top nav');
+  if (!top || !btn || !nav) return;
+  const set = open => { top.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open)); btn.setAttribute('aria-label', open ? 'Stäng menyn' : 'Meny'); };
+  btn.onclick = e => { e.stopPropagation(); set(!top.classList.contains('open')); };
+  nav.addEventListener('click', e => { if (e.target.closest('a')) set(false); });
+  addEventListener('hashchange', () => set(false));
+  document.addEventListener('click', e => { if (top.classList.contains('open') && !top.contains(e.target)) set(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') set(false); });
+  // en prick på knappen när något i menyn har en siffra (bokningar, önskelista)
+  const dot = () => btn.classList.toggle('has-badge', !!nav.querySelector('.badge'));
+  new MutationObserver(dot).observe(nav, { childList: true, subtree: true }); dot();
+})();
 $('#bell').onclick = e => {
   e.stopPropagation();
   if ($('#notes')) return $('#notes').remove();
