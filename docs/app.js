@@ -574,7 +574,7 @@ function viewDeck(id) {
     ensureCards(missingInfo).catch(e => toast(e.message)).finally(() => { viewDeck.loading = false; render(); });
   }
   const commander = deck.format === 'commander';
-  const tabs = [['lista', 'Lista'], ['sok', 'Hitta kort'], ...(commander ? [['forslag', 'Förslag']] : []), ['forbattra', 'Förbättra'], ['kop', 'Köpa'], ['statistik', 'Statistik'], ['provhand', 'Provhand'],
+  const tabs = [['lista', 'Lista'], ...(commander ? [['forslag', 'Förslag']] : []), ['forbattra', 'Förbättra'], ['kop', 'Köpa'], ['statistik', 'Statistik'], ['provhand', 'Provhand'],
     ...(commander ? [['kombos', 'Kombos']] : []), ['versioner', 'Versioner'], ['text', 'Import/Export']];
   if (!tabs.some(t => t[0] === S.tab)) S.tab = 'lista';
   $('#app').innerHTML = `
@@ -582,7 +582,7 @@ function viewDeck(id) {
       <a href="#/" class="icon-btn" aria-label="Tillbaka">←</a>
       <input type="text" id="deckName" value="${esc(deck.name)}" style="font-size:1.3rem;font-weight:700;flex:1;min-width:180px;border-color:transparent;background:transparent">
       <select id="deckFormat"><option value="commander" ${deck.format === 'commander' ? 'selected' : ''}>Commander</option><option value="modern" ${deck.format === 'modern' ? 'selected' : ''}>Modern</option></select>
-      ${S.cloud ? `<label class="small row" title="Publika lekar syns för alla inloggade under Utforska. Bara du kan ändra dem."><input type="checkbox" id="deckPublic" ${deck.public ? 'checked' : ''}> Publik</label>` : ''}
+      ${S.cloud ? `<label class="small row" title="${S.v11 ? 'Publika lekar syns under Utforska för dem i dina grupper.' : 'Publika lekar syns för alla inloggade under Utforska.'} Bara du kan ändra dem."><input type="checkbox" id="deckPublic" ${deck.public ? 'checked' : ''}> Publik</label>` : ''}
       ${S.v6 ? `<label class="small row" title="Korten sitter i leken och räknas som upptagna i dina andra lekar"><input type="checkbox" id="built" ${deck.built ? 'checked' : ''}> Ihopbyggd</label>` : ''}
       <button class="btn small" id="cmpDeck">Jämför</button>
       <button class="btn danger small" id="delDeck">Radera</button>
@@ -615,7 +615,7 @@ function viewDeck(id) {
     S.tab = b.dataset.next; render();
   });
   const tab = $('#tab');
-  ({ lista: tabList, statistik: tabStats, provhand: tabHand, forbattra: tabImprove, kop: tabBuy, sok: tabSearch, forslag: tabSuggest, kombos: tabCombos, versioner: tabVersions, text: tabText })[S.tab](deck, tab);
+  ({ lista: tabList, statistik: tabStats, provhand: tabHand, forbattra: tabImprove, kop: tabBuy, forslag: tabSuggest, kombos: tabCombos, versioner: tabVersions, text: tabText })[S.tab](deck, tab);
 }
 
 // --- Lista ---
@@ -1085,7 +1085,7 @@ function tabImprove(deck, tab) {
         return `<div class="gap ${g.state}"><div class="row"><span>${icon[g.state]}</span><b>${esc(g.label)}</b><span class="spacer"></span><span class="small">${g.disp || g.n + ' st'} <span class="muted">(${g.range || (g.max ? g.min + '–' + g.max : 'minst ' + g.min)})</span></span></div>
         ${g.state !== 'ok' ? `<p class="small muted" style="margin:.2rem 0">${g.over && g.k === 'land' ? 'Många länder. Byt några mot ramp eller kortdragning.' : esc(g.why)}</p>
           ${own.length ? `<div class="row small" style="flex-wrap:wrap;gap:.3rem">Lediga i samlingen: ${own.map(n => `<button class="btn small" data-gadd="${esc(n)}" title="Lägg till i leken"><span data-img="${esc(S.cards[n]?.image || '')}">+ ${esc(n)}</span></button>`).join('')}</div>` : ''}
-          ${g.q && !g.over ? `<button class="btn small" data-gq="${esc(g.q)}" style="margin-top:.3rem">Sök fler</button>` : ''}` : ''}
+          ` : ''}
         ${g.hits.length ? `<details class="small"><summary class="muted">Visa vilka</summary>${g.hits.map(esc).join(', ')}</details>` : ''}</div>`;
       }).join('')}
     </div>
@@ -1093,7 +1093,6 @@ function tabImprove(deck, tab) {
   </div>`;
   tab.addEventListener('click', async e => {
     const a = e.target.closest('[data-gadd]'); if (a) { await addToDeck(deck, a.dataset.gadd); return; }
-    const q = e.target.closest('[data-gq]'); if (q) { tabSearch.last = q.dataset.gq; S.tab = 'sok'; render(); }
   });
   if (deck.format === 'commander') drawPlan(deck, $('#upPlan', tab));
 }
@@ -1416,7 +1415,7 @@ async function cheaperModal(name, deck) {
         <div class="small">ca ${krE(c.eur)}${h ? ` · <span class="pill good">du har ${h} ledig${h > 1 ? 'a' : ''}</span>` : ''}</div>
         <div class="small muted clamp">${esc((c.oracle_text || '').slice(0, 140))}</div></div>
       <div class="altbtn">${entry && !inDeck.has(c.name) ? '<button class="btn small primary" data-swapto>Byt ut</button>' : ''}${deck && !entry && !inDeck.has(c.name) ? '<button class="btn small" data-addalt>+ Lägg till</button>' : ''}${inDeck.has(c.name) ? '<span class="muted small">I leken</span>' : ''}${S.v3 && !h ? `<button class="btn small" data-wishalt title="Önskelista">${S.wishlist.some(w => w.name === c.name) ? '♥' : '♡'}</button>` : ''}</div></div>`).join('')}</div>`
-      : '<p class="muted">Hittade inga billigare kort som gör samma sak. Prova Hitta kort i leken.</p>'}
+      : '<p class="muted">Hittade inga billigare kort som gör samma sak.</p>'}
     ${entry ? '<p class="small muted">Byt ut ersätter kortet i leken. Den gamla listan sparas under Versioner.</p>' : ''}`, box => {
     box.onclick = async e => {
       const row = e.target.closest('.alt'); if (!row) return;
@@ -1583,42 +1582,6 @@ function tabBuy(deck, tab) {
   };
 }
 
-// --- Hitta kort ---
-function tabSearch(deck, tab) {
-  const cmd = deck.cards.filter(c => c.board === 'commander');
-  const ident = [...new Set(cmd.flatMap(c => S.cards[c.name]?.color_identity || []))].join('') || 'c';
-  const base = deck.format === 'commander' ? (cmd.length ? `id<=${ident} f:commander` : 'f:commander') : 'f:modern';
-  const presets = deck.format === 'commander'
-    ? [['Ramp', 'o:"add {" t:artifact cmc<=3'], ['Kortdragning', 'o:"draw" (t:instant or t:sorcery or t:enchantment)'], ['Removal', '(o:"destroy target" or o:"exile target") (t:instant or t:sorcery)'], ['Massborttagning', 'o:"destroy all" or o:"exile all"'], ['Länder', 't:land -t:basic'], ['Befälhavare', 't:legendary t:creature']]
-    : [['Removal', '(o:"destroy target" or o:"exile target" or o:"damage to any target") cmc<=2'], ['Kortdragning', 'o:draw cmc<=3'], ['Motspel', 'o:"counter target"'], ['Länder', 't:land -t:basic']];
-  tab.innerHTML = `<div class="card">
-    <div class="row"><input type="search" id="sq" placeholder="Scryfall-sökning, t.ex. t:dragon cmc<=5" style="flex:1;min-width:220px" value="${esc(tabSearch.last || '')}"><button class="btn primary" id="sgo">Sök</button></div>
-    <div class="row small" style="margin-top:.5rem">${presets.map(([l, q]) => `<button class="btn small" data-q="${esc(q)}">${l}</button>`).join('')}
-      <span class="muted">Filtreras automatiskt på: <code>${esc(base)}</code></span></div>
-    <div id="sres"></div></div>`;
-  const run = async q => {
-    tabSearch.last = q;
-    const res = $('#sres'); res.innerHTML = '<p class="muted">Söker…</p>';
-    try {
-      const r = await api('/api/search?q=' + encodeURIComponent(`${q} ${base}`));
-      for (const c of r.cards) S.cards[c.name] = c;
-      const inDeck = new Set(deck.cards.map(c => c.name));
-      res.innerHTML = r.cards.length ? `<p class="muted small">${r.total} träffar, sorterade efter popularitet (EDHREC). Visar ${r.cards.length}.</p>
-        <div class="search-results">${r.cards.map(c => `<figure><img loading="lazy" src="${esc(c.thumb)}" alt="${esc(c.name)}" data-img="${esc(c.image)}" data-open="${esc(c.name)}">
-          <figcaption><button class="btn small" data-add="${esc(c.name)}" ${inDeck.has(c.name) ? 'disabled' : ''}>${inDeck.has(c.name) ? 'I leken' : '+ Lägg till'}</button></figcaption></figure>`).join('')}</div>`
-        : '<p class="muted">Inga träffar.</p>';
-    } catch (e) { res.innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
-  };
-  $('#sgo').onclick = () => run($('#sq').value);
-  $('#sq').onkeydown = e => { if (e.key === 'Enter') run($('#sq').value); };
-  tab.addEventListener('click', async e => {
-    const q = e.target.closest('[data-q]'); if (q) { $('#sq').value = q.dataset.q; return run(q.dataset.q); }
-    const a = e.target.closest('[data-add]'); if (a) { await addToDeck(deck, a.dataset.add); return; }
-    const o = e.target.closest('[data-open]'); if (o) cardModal(o.dataset.open, deck);
-  });
-  if (tabSearch.last) run(tabSearch.last);
-}
-
 // --- Import/Export ---
 function tabText(deck, tab) {
   tab.innerHTML = `<div class="grid cols-2">
@@ -1763,8 +1726,9 @@ function viewSettings() {
     <h3>Utseende</h3>
     <div class="seg" id="themeSeg" role="group" aria-label="Tema">${[['auto', 'Som telefonen'], ['light', '☀️ Ljust'], ['dark', '🌙 Mörkt']].map(([k, l]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}">${l}</button>`).join('')}</div>
     ${S.cloud ? `<h3>Ditt namn</h3>
-    <p class="small muted">Syns för andra inloggade på dina publika lekar och i bytesbörsen. Inloggad som ${esc(S.profile.email || '')}.</p>
+    <p class="small muted">Syns för ${S.v11 ? 'dem i dina grupper' : 'andra inloggade'} på dina publika lekar och i bytesbörsen. Inloggad som ${esc(S.profile.email || '')}.</p>
     <div class="row"><input type="text" id="dispName" maxlength="40" placeholder="T.ex. Jonte" style="flex:1" value="${esc(S.profile.name || '')}"><button class="btn primary" id="saveName">Spara namn</button></div>` : ''}
+    ${S.cloud && S.v11 ? `<h3>Grupper</h3><div id="groups"><p class="small muted">Laddar grupper…</p></div>` : ''}
     ${S.cloud && S.v8 ? `<h3>Bytesförslag</h3>
     <label class="small row"><input type="checkbox" id="shareWants" ${S.profile.wants ? 'checked' : ''}> Visa vad jag saknar för den som har kortet till byte</label>
     <p class="small muted">Den som har ett kort till byte som saknas i dina lekar eller står på din önskelista får se det under Bytesförslag. Inget annat i din samling eller önskelista visas.</p>` : ''}
@@ -1801,11 +1765,54 @@ function viewSettings() {
     try { await api('/api/profile', { method: 'PUT', body: { name: S.profile.name, wants: e.target.checked } }); S.profile.wants = e.target.checked; toast(e.target.checked ? 'Kompisar med kort till byte ser nu vad du saknar' : 'Det du saknar delas inte längre'); }
     catch (err) { e.target.checked = !e.target.checked; toast('Kunde inte spara: ' + err.message, 4000); }
   };
+  if ($('#groups')) renderGroups();
   if ($('#saveName')) $('#saveName').onclick = async () => {
     const name = $('#dispName').value.trim();
     if (!name) return toast('Skriv ett namn');
     try { await api('/api/profile', { method: 'PUT', body: { name } }); S.profile.name = name; toast('Namnet är sparat'); }
     catch (e) { toast('Kunde inte spara: ' + e.message, 4000); }
+  };
+}
+
+// ---------- grupper (v11): andras saker syns bara för den som delar en grupp med dem ----------
+async function renderGroups() {
+  const box = $('#groups'); if (!box) return;
+  let gs;
+  try { gs = await api('/api/groups'); } catch (e) { box.innerHTML = `<p class="bad small">Kunde inte ladda grupperna: ${esc(e.message)}</p>`; return; }
+  if (!document.body.contains(box)) return;
+  const who = u => esc(u.name || 'Utan namn') + (u.me ? ' (du)' : '') + (u.owner ? ' ★' : '');
+  box.innerHTML = `<p class="small muted">Dina publika lekar, bytesbörsen, ditt namn, spelkvällar, topplistan och bytesförslag syns bara för dem du delar en grupp med. Bjud in någon genom att ge hen gruppens kod.</p>
+    ${gs.length ? gs.map(g => `<div class="card" data-grp="${g.id}" style="padding:.6rem .8rem;margin:.5rem 0">
+      <div class="row"><b style="flex:1">${esc(g.name)}</b><span class="small muted">${g.members.length} ${g.members.length === 1 ? 'medlem' : 'medlemmar'}${g.mine ? ' · du är ägare' : ''}</span></div>
+      <div class="row small" style="flex-wrap:wrap;gap:.3rem;margin:.4rem 0">${g.members.map(u => `<span class="pill">${who(u)}${g.mine && !u.me ? ` <button class="icon-btn" data-gkick="${u.id}" data-gname="${esc(u.name || 'Utan namn')}" title="Ta bort ur gruppen" style="padding:0 .2rem">✕</button>` : ''}</span>`).join('')}</div>
+      ${g.mine ? `<div class="row small" style="flex-wrap:wrap">Kod: <code style="font-size:1rem;letter-spacing:.05em">${esc(g.code)}</code>
+        <button class="btn small" data-gcopy="${esc(g.code)}">Kopiera</button><button class="btn small" data-gnew title="Den gamla koden slutar gälla. De som redan är med stannar kvar.">Ny kod</button>
+        <button class="btn small" data-gren>Byt namn</button><span class="spacer"></span><button class="btn small" data-gleave>Lämna</button><button class="btn danger small" data-gdel>Radera</button></div>`
+      : `<div class="row small"><span class="spacer"></span><button class="btn small" data-gleave>Lämna gruppen</button></div>`}
+    </div>`).join('') : '<p class="small"><b>Du är inte med i någon grupp än.</b> Ingen annan ser något av ditt, och du ser bara ditt eget.</p>'}
+    <div class="row" style="margin-top:.5rem"><input type="text" id="gJoin" maxlength="12" placeholder="Kod, t.ex. A1B2-C3D4" style="flex:1;min-width:140px;text-transform:uppercase"><button class="btn" id="gJoinGo">Gå med</button></div>
+    <div class="row" style="margin-top:.4rem"><input type="text" id="gName" maxlength="40" placeholder="Namn på ny grupp" style="flex:1;min-width:140px"><button class="btn" id="gNew">Skapa grupp</button></div>`;
+  const after = async msg => {
+    toast(msg, 3500);
+    // andras saker kan ha blivit synliga eller försvunnit
+    S.publicDecks = null; S.trades = null; S.events = null;
+    try { const st = await api('/api/state'); S.users = st.users; } catch {}
+    renderGroups();
+  };
+  const run = async (f, msg) => { try { await f(); await after(msg); } catch (e) { toast(e.message, 4500); } };
+  $('#gJoinGo').onclick = () => { const code = $('#gJoin').value.trim(); if (code) run(() => api('/api/groups/join', { method: 'POST', body: { code } }), 'Du är med i gruppen'); };
+  $('#gJoin').onkeydown = e => { if (e.key === 'Enter') $('#gJoinGo').click(); };
+  $('#gNew').onclick = () => { const name = $('#gName').value.trim(); if (!name) return toast('Skriv ett namn på gruppen'); run(() => api('/api/groups', { method: 'POST', body: { name } }), 'Gruppen är skapad. Ge koden till dem du vill bjuda in.'); };
+  box.onclick = async e => {
+    const card = e.target.closest('[data-grp]'); if (!card) return;
+    const id = card.dataset.grp, g = gs.find(x => x.id === id); if (!g) return;
+    const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.gcopy) { try { await navigator.clipboard.writeText(t.dataset.gcopy); toast('Koden är kopierad'); } catch { toast(t.dataset.gcopy); } return; }
+    if (t.dataset.gkick) { if (confirm(`Ta bort ${t.dataset.gname} ur ${g.name}?`)) run(() => api(`/api/groups/${id}/kick`, { method: 'POST', body: { user: t.dataset.gkick } }), `${t.dataset.gname} är borttagen ur gruppen`); return; }
+    if ('gnew' in t.dataset) { if (confirm('Skapa en ny kod? Den gamla slutar gälla, men de som redan är med stannar kvar.')) run(() => api(`/api/groups/${id}`, { method: 'PUT', body: { newCode: true } }), 'Ny kod skapad'); return; }
+    if ('gren' in t.dataset) { const n = prompt('Nytt namn på gruppen:', g.name); if (n && n.trim()) run(() => api(`/api/groups/${id}`, { method: 'PUT', body: { name: n.trim() } }), 'Namnet är bytt'); return; }
+    if ('gleave' in t.dataset) { if (confirm(`Lämna ${g.name}? ${g.mine && g.members.length > 1 ? 'Den som varit med längst blir ny ägare. ' : ''}Ni ser inte längre varandras saker om ni inte delar en annan grupp.`)) run(() => api(`/api/groups/${id}/leave`, { method: 'POST' }), 'Du har lämnat gruppen'); return; }
+    if ('gdel' in t.dataset) { if (confirm(`Radera ${g.name} för alla ${g.members.length} medlemmar? Ingen förlorar sina lekar eller kort, men ni slutar se varandras saker.`)) run(() => api(`/api/groups/${id}`, { method: 'DELETE' }), 'Gruppen är raderad'); }
   };
 }
 

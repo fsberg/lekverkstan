@@ -8,7 +8,7 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
-  let v2 = false, v4 = false, v7 = false, v8 = false, v10 = false;
+  let v2 = false, v4 = false, v7 = false, v8 = false, v10 = false, v11 = false;
   const colQty = {}; // egna antal, för att veta när ett kort läggs till (sortering på senast inlagt)
   let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
@@ -181,7 +181,10 @@
     sb = createClient(C.SUPABASE_URL, C.SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
     sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') newPasswordScreen(); });
     const { data } = await sb.auth.getSession();
-    user = data.session?.user || await authScreen();
+    // den sparade sessionen kan vara ogiltig (utgången eller borttagen) – kolla mot servern
+    let ok = data.session?.user || null;
+    if (ok) { const g = await sb.auth.getUser(); if (g.error && g.error.status && g.error.status < 500) { await sb.auth.signOut({ scope: 'local' }).catch(() => {}); ok = null; } else if (g.data?.user) ok = g.data.user; }
+    user = ok || await authScreen();
     // utloggningsknapp i menyn
     const nav = document.querySelector('.top nav');
     const a = document.createElement('a');
@@ -199,7 +202,7 @@
   const wishOut = x => ({ ...x, max_price: x.max_price == null ? null : Number(x.max_price), last_price: x.last_price == null ? null : Number(x.last_price) });
   const deckOut = d => ({ ...d, created: Date.parse(d.created), updated: Date.parse(d.updated) });
 
-  window.LV_BACKEND = async (path, opts = {}) => {
+  const route = async (path, opts = {}) => {
     const m = (opts.method || 'GET').toUpperCase();
     const body = opts.body || {};
     const url = new URL(path, location.origin);
@@ -233,6 +236,8 @@
         sb.from('lv_games').select('match_id').limit(0),
       ]);
       v10 = !mt.error;
+      // v11: grupper
+      v11 = !(await sb.from('lv_groups').select('id').limit(0)).error;
       // användare som går att välja som spelare (bara de som har ett namn)
       const us = v10 ? await sb.from('lv_profiles').select('user_id, display_name').neq('display_name', '').limit(500) : { data: [] };
       v7 = !ev.error && !sh.error;
@@ -247,7 +252,7 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
-        v3: !w.error, v4, v6: !bu.error, v7, v8, v10,
+        v3: !w.error, v4, v6: !bu.error, v7, v8, v10, v11,
         users: (us.data || []).map(r => ({ id: r.user_id, name: String(r.display_name || '').trim().slice(0, 20) })).filter(u => u.name),
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
         profile: { id: user.id, name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games, wants: !!wa.data?.share_wants },
@@ -293,6 +298,28 @@
         .select('day, value_eur, cards, prices').single();
       fail(error); return { ...data, value_eur: +data.value_eur };
     }
+    // ---------- grupper (v11) ----------
+    if (p === '/api/groups' && m === 'GET') {
+      const [g, mb] = await Promise.all([
+        sb.from('lv_groups').select('id, name, owner, code, created').order('created'),
+        sb.from('lv_group_members').select('group_id, user_id, joined').order('joined'),
+      ]);
+      fail(g.error); fail(mb.error);
+      const ids = [...new Set(mb.data.map(x => x.user_id))];
+      const pr = ids.length ? await sb.from('lv_profiles').select('user_id, display_name').in('user_id', ids) : { data: [] };
+      const nm = Object.fromEntries((pr.data || []).map(x => [x.user_id, String(x.display_name || '').trim()]));
+      return g.data.map(x => ({ ...x, mine: x.owner === user.id,
+        members: mb.data.filter(y => y.group_id === x.id).map(y => ({ id: y.user_id, name: nm[y.user_id] || '', me: y.user_id === user.id, owner: y.user_id === x.owner })) }));
+    }
+    const rpc = async (fn, args) => { const { data, error } = await sb.rpc(fn, args); fail(error); return data; };
+    if (p === '/api/groups' && m === 'POST') return { id: await rpc('lv_group_create', { p_name: String(body.name || '').trim().slice(0, 40) }) };
+    if (p === '/api/groups/join' && m === 'POST') return { id: await rpc('lv_group_join', { p_code: String(body.code || '').trim().toUpperCase().slice(0, 20) }) };
+    const grm = p.match(/^\/api\/groups\/([0-9a-f-]{36})(\/leave|\/kick)?$/);
+    if (grm && grm[2] === '/leave' && m === 'POST') { await rpc('lv_group_leave', { p_group: grm[1] }); return { ok: true }; }
+    if (grm && grm[2] === '/kick' && m === 'POST') { await rpc('lv_group_kick', { p_group: grm[1], p_user: body.user }); return { ok: true }; }
+    if (grm && !grm[2] && m === 'PUT') { await rpc('lv_group_update', { p_group: grm[1], p_name: String(body.name || ''), p_new_code: !!body.newCode }); return { ok: true }; }
+    if (grm && !grm[2] && m === 'DELETE') { await rpc('lv_group_delete', { p_group: grm[1] }); return { ok: true }; }
+
     if (p === '/api/events' && m === 'GET') {
       if (!v7) return [];
       const { data, error } = await sb.from('lv_events').select('*').order('created', { ascending: false }).limit(50);
@@ -518,5 +545,24 @@
       return data;
     }
     throw new Error('okänd väg ' + p);
+  };
+
+  // Har inloggningen gått ut nekar databasen allt (401 / permission denied) och appen ser ut
+  // att fungera men sparar inget. Förnya sessionen och försök igen, annars logga in på nytt.
+  const authLost = e => /permission denied|JWT|not authenticated|401|403/i.test(String(e && e.message || e));
+  let relogging = false;
+  window.LV_BACKEND = async (path, opts) => {
+    try { return await route(path, opts); }
+    catch (e) {
+      if (!authLost(e) || relogging) throw e;
+      const r = await sb.auth.refreshSession().catch(err => ({ error: err }));
+      const u = r.error ? null : (await sb.auth.getUser()).data?.user;
+      if (u) { user = u; return await route(path, opts); }
+      relogging = true;
+      await sb.auth.signOut({ scope: 'local' }).catch(() => {});
+      alert('Du har blivit utloggad. Logga in igen så sparas allt som vanligt.');
+      location.reload();
+      throw new Error('Utloggad – logga in igen');
+    }
   };
 })();
