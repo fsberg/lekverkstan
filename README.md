@@ -1,6 +1,6 @@
 # Manakeep
 
-(Hette tidigare Lekverkstan.)
+(Hette tidigare Lekverkstan.) Live på https://manakeep.se
 
 Lokal app för att bygga MTG-lekar (Commander och Modern), bocka i vilka kort du har och planera köp.
 
