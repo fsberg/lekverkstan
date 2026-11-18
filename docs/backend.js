@@ -8,7 +8,7 @@
   if (local || !C.SUPABASE_URL) return;
 
   let sb, user;
-  let v2 = false, v4 = false, v7 = false, v8 = false, v10 = false, v11 = false;
+  let v2 = false, v4 = false, v7 = false, v8 = false, v10 = false, v11 = false, v12 = false;
   const colQty = {}; // egna antal, för att veta när ett kort läggs till (sortering på senast inlagt)
   let tradeMap = {}; // egna bytesantal, så att antal aldrig sänks under det som är till byte
   const SM_DEFAULT = 'https://www.svenskamagic.com/kortparmen/index.php?action=search&s_name={q}&tokens=1&special=1&basicland=1&order=name&group=1&n=1';
@@ -117,7 +117,7 @@
         <form>
           <p><input type="email" name="email" placeholder="E-post" autocomplete="email" required style="width:100%"></p>
           <p><input type="password" name="pw" placeholder="Lösenord" autocomplete="current-password" required minlength="8" style="width:100%"></p>
-          <p class="up-only" hidden><input type="text" name="invite" placeholder="Inbjudningskod, t.ex. A1B2-C3D4-E5F6" style="width:100%;text-transform:uppercase"></p>
+          <p class="up-only" hidden><input type="text" name="invite" placeholder="Inbjudnings- eller gruppkod" style="width:100%;text-transform:uppercase"></p>
           <p class="msg small" hidden></p>
           <p><button class="btn primary" style="width:100%" type="submit">Logga in</button></p>
           <p class="small" style="text-align:center"><a href="#" data-forgot>Glömt lösenordet?</a></p>
@@ -125,6 +125,7 @@
       </div>`;
     document.body.appendChild(el);
     let mode = 'in';
+    const link = (location.hash.match(/^#\/gruppkod\/([A-Za-z0-9-]{4,20})$/) || [])[1];
     const f = el.querySelector('form'), msg = el.querySelector('.msg');
     const say = (t, bad) => { msg.textContent = t; msg.hidden = !t; msg.style.color = bad ? 'var(--bad)' : 'var(--good)'; };
     el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
@@ -136,6 +137,11 @@
       f.querySelector('[type=submit]').textContent = mode === 'up' ? 'Skapa konto' : 'Logga in';
       say('');
     });
+    if (link) {
+      el.querySelector('[data-m=up]').click();
+      f.invite.value = link.toUpperCase();
+      say('Du är inbjuden till en grupp. Skapa ett konto här, eller välj Logga in om du redan har ett – då går du med i gruppen efteråt.');
+    }
     el.querySelector('[data-forgot]').onclick = async e => {
       e.preventDefault();
       if (!f.email.value) return say('Skriv din e-post först', true);
@@ -160,7 +166,7 @@
           el.remove(); resolve(res.data.session.user);
         } catch (err) {
           const m = String(err.message || err);
-          say(/invite|inbjudning|Database error/i.test(m) ? 'Ogiltig eller redan använd inbjudningskod.'
+          say(/invite|inbjudning|Database error/i.test(m) ? 'Koden fungerar inte. Den kan vara använd, bytt eller stängd för nya konton – be om en ny.'
             : /Invalid login/i.test(m) ? 'Fel e-post eller lösenord.'
             : /already registered/i.test(m) ? 'Det finns redan ett konto med den e-posten.' : m, true);
         } finally { btn.disabled = false; }
@@ -238,6 +244,8 @@
       v10 = !mt.error;
       // v11: grupper
       v11 = !(await sb.from('lv_groups').select('id').limit(0)).error;
+      // v12: gruppkoden fungerar som inbjudan, turneringsmatcher
+      v12 = v11 && !(await sb.from('lv_groups').select('signup').limit(0)).error;
       // användare som går att välja som spelare (bara de som har ett namn)
       const us = v10 ? await sb.from('lv_profiles').select('user_id, display_name').neq('display_name', '').limit(500) : { data: [] };
       v7 = !ev.error && !sh.error;
@@ -252,7 +260,7 @@
         games: g.error ? [] : g.data,
         wishlist: w.error ? [] : w.data.map(wishOut),
         loans: l.error ? [] : l.data,
-        v3: !w.error, v4, v6: !bu.error, v7, v8, v10, v11,
+        v3: !w.error, v4, v6: !bu.error, v7, v8, v10, v11, v12,
         users: (us.data || []).map(r => ({ id: r.user_id, name: String(r.display_name || '').trim().slice(0, 20) })).filter(u => u.name),
         colmeta: v4 ? Object.fromEntries(cm.data.map(r => [r.name, { added: Date.parse(r.added), prints: r.prints || [] }])) : {},
         profile: { id: user.id, name: pr.data?.display_name || '', email: user.email, share: !!sh.data?.share_games, wants: !!wa.data?.share_wants },
@@ -301,7 +309,7 @@
     // ---------- grupper (v11) ----------
     if (p === '/api/groups' && m === 'GET') {
       const [g, mb] = await Promise.all([
-        sb.from('lv_groups').select('id, name, owner, code, created').order('created'),
+        sb.from('lv_groups').select('id, name, owner, code, created' + (v12 ? ', signup' : '')).order('created'),
         sb.from('lv_group_members').select('group_id, user_id, joined').order('joined'),
       ]);
       fail(g.error); fail(mb.error);
@@ -317,7 +325,7 @@
     const grm = p.match(/^\/api\/groups\/([0-9a-f-]{36})(\/leave|\/kick)?$/);
     if (grm && grm[2] === '/leave' && m === 'POST') { await rpc('lv_group_leave', { p_group: grm[1] }); return { ok: true }; }
     if (grm && grm[2] === '/kick' && m === 'POST') { await rpc('lv_group_kick', { p_group: grm[1], p_user: body.user }); return { ok: true }; }
-    if (grm && !grm[2] && m === 'PUT') { await rpc('lv_group_update', { p_group: grm[1], p_name: String(body.name || ''), p_new_code: !!body.newCode }); return { ok: true }; }
+    if (grm && !grm[2] && m === 'PUT') { await rpc('lv_group_update', { p_group: grm[1], p_name: String(body.name || ''), p_new_code: !!body.newCode, ...(v12 && typeof body.signup === 'boolean' ? { p_signup: body.signup } : {}) }); return { ok: true }; }
     if (grm && !grm[2] && m === 'DELETE') { await rpc('lv_group_delete', { p_group: grm[1] }); return { ok: true }; }
 
     if (p === '/api/events' && m === 'GET') {
@@ -393,7 +401,7 @@
         players: Math.max(2, Math.min(10, body.players | 0 || 2)), opponents: String(body.opponents || '').slice(0, 300), notes: String(body.notes || '').slice(0, 1000),
       };
       // från livräknaren: samma match kan redan vara loggad åt mig av någon annan, då fylls leken i
-      if (v10 && /^liv-\d{1,16}$/.test(body.match_id || '')) {
+      if (v10 && (/^liv-\d{1,16}$/.test(body.match_id || '') || (v12 && /^tur-\d{1,16}$/.test(body.match_id || '')))) {
         const { data, error } = await sb.from('lv_games').upsert({ ...row, owner: user.id, match_id: body.match_id }, { onConflict: 'owner,match_id' }).select().single();
         fail(error); return data;
       }
@@ -402,7 +410,7 @@
     }
     if (p === '/api/match-log' && m === 'POST') {
       if (!v10) return 0;
-      const { data, error } = await sb.rpc('lv_log_match', { p_match: String(body.match || ''), p_players: (body.players || []).slice(0, 6), p_winner: body.winner == null ? null : body.winner | 0, p_minutes: Math.max(0, body.minutes | 0) });
+      const { data, error } = await sb.rpc('lv_log_match', { p_match: String(body.match || ''), p_players: (body.players || []).slice(0, 6), p_winner: body.winner == null ? null : body.winner | 0, p_minutes: Math.max(0, body.minutes | 0), ...(v12 && /^[0-3]-[0-3](-[0-3])?$/.test(body.score || '') ? { p_score: body.score } : {}) });
       fail(error); return data;
     }
     const gm = p.match(/^\/api\/games\/([\w-]+)$/);

@@ -1748,12 +1748,14 @@ function viewSettings() {
     <div class="card"><h2>Utseende</h2>
       <div class="seg" id="themeSeg" role="group" aria-label="Tema">${[['auto', 'Som telefonen'], ['light', '☀️ Ljust'], ['dark', '🌙 Mörkt']].map(([k, l]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}">${l}</button>`).join('')}</div>
       <div class="themes" role="group" aria-label="Färgtema">${COLOR_THEMES.map(([k, l, c]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}"><span class="sw" style="background:${c}"></span>${l}</button>`).join('')}</div>
+      <p class="small muted themes-label">Gillen</p>
+      <div class="themes" role="group" aria-label="Gilletema">${GUILD_THEMES.map(([k, l, c]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}"><span class="sw" style="background:${c}"></span>${l}</button>`).join('')}</div>
       <label class="chk"><input type="checkbox" id="helpAll" ${helpOpen() ? 'checked' : ''}> Visa förklaringar direkt i stället för bakom ⓘ</label></div>
     ${S.cloud ? `<div class="card"><h2>Ditt namn</h2>
       <p class="small muted">Syns för ${S.v11 ? 'dem i dina grupper' : 'andra inloggade'} på dina publika lekar, i bytesbörsen och i livräknaren. Du är inloggad som ${esc(S.profile.email || '')}.</p>
       <div class="row"><input type="text" id="dispName" maxlength="40" placeholder="T.ex. Jonte" style="flex:1" value="${esc(S.profile.name || '')}"><button class="btn primary" id="saveName">Spara</button></div></div>` : ''}
     ${S.cloud && S.v11 ? `<div class="card"><h2>Grupper</h2>
-      <p class="small muted">Dina publika lekar, bytesbörsen, ditt namn, spelkvällar, topplistan och bytesförslag syns bara för dem du delar en grupp med. Bjud in någon genom att ge hen gruppens kod.</p>
+      <p class="small muted">Dina publika lekar, bytesbörsen, ditt namn, spelkvällar, topplistan och bytesförslag syns bara för dem du delar en grupp med. Bjud in någon genom att skicka gruppens länk${S.v12 ? '. Den som inte har konto kan skapa ett direkt med länken eller koden' : ' eller kod'}.</p>
       <div id="groups"><p class="small muted">Laddar grupper…</p></div></div>` : ''}
     ${S.cloud && S.v8 ? `<div class="card"><h2>Bytesförslag</h2>
       <p class="small muted">Den som har ett kort till byte som saknas i dina lekar eller står på din önskelista får se det under Bytesförslag. Inget annat i din samling eller önskelista visas.</p>
@@ -1811,8 +1813,9 @@ async function renderGroups() {
       <div class="row"><b style="flex:1">${esc(g.name)}</b><span class="small muted">${g.members.length} ${g.members.length === 1 ? 'medlem' : 'medlemmar'}${g.mine ? ' · du är ägare' : ''}</span></div>
       <div class="row small" style="flex-wrap:wrap;gap:.3rem;margin:.4rem 0">${g.members.map(u => `<span class="pill">${who(u)}${g.mine && !u.me ? ` <button class="icon-btn" data-gkick="${u.id}" data-gname="${esc(u.name || 'Utan namn')}" title="Ta bort ur gruppen" style="padding:0 .2rem">✕</button>` : ''}</span>`).join('')}</div>
       ${g.mine ? `<div class="row small" style="flex-wrap:wrap">Kod: <code style="font-size:1rem;letter-spacing:.05em">${esc(g.code)}</code>
-        <button class="btn small" data-gcopy="${esc(g.code)}">Kopiera</button><button class="btn small" data-gnew title="Den gamla koden slutar gälla. De som redan är med stannar kvar.">Ny kod</button>
-        <button class="btn small" data-gren>Byt namn</button><span class="spacer"></span><button class="btn small" data-gleave>Lämna</button><button class="btn danger small" data-gdel>Radera</button></div>`
+        <button class="btn small primary" data-glink="${esc(g.code)}">${navigator.share ? 'Dela länk' : 'Kopiera länk'}</button><button class="btn small" data-gcopy="${esc(g.code)}">Kopiera kod</button><button class="btn small" data-gnew title="Den gamla koden slutar gälla. De som redan är med stannar kvar.">Ny kod</button>
+        <button class="btn small" data-gren>Byt namn</button><span class="spacer"></span><button class="btn small" data-gleave>Lämna</button><button class="btn danger small" data-gdel>Radera</button></div>
+        ${S.v12 ? `<label class="chk small"><input type="checkbox" data-gsignup ${g.signup ? 'checked' : ''}> Länken och koden får skapa nya konton (stäng av om de spridits för långt)</label>` : ''}`
       : `<div class="row small"><span class="spacer"></span><button class="btn small" data-gleave>Lämna gruppen</button></div>`}
     </div>`).join('') : '<p class="small"><b>Du är inte med i någon grupp än.</b> Ingen annan ser något av ditt, och du ser bara ditt eget.</p>'}
     <div class="row" style="margin-top:.5rem"><input type="text" id="gJoin" maxlength="12" placeholder="Kod, t.ex. A1B2-C3D4" style="flex:1;min-width:140px;text-transform:uppercase"><button class="btn" id="gJoinGo">Gå med</button></div>
@@ -1820,7 +1823,7 @@ async function renderGroups() {
   const after = async msg => {
     toast(msg, 3500);
     // andras saker kan ha blivit synliga eller försvunnit
-    S.publicDecks = null; S.trades = null; S.events = null;
+    S.publicDecks = null; S.trades = null; S.events = null; S.groups = null; S.wants = null;
     try { const st = await api('/api/state'); S.users = st.users; } catch {}
     renderGroups();
   };
@@ -1828,10 +1831,20 @@ async function renderGroups() {
   $('#gJoinGo').onclick = () => { const code = $('#gJoin').value.trim(); if (code) run(() => api('/api/groups/join', { method: 'POST', body: { code } }), 'Du är med i gruppen'); };
   $('#gJoin').onkeydown = e => { if (e.key === 'Enter') $('#gJoinGo').click(); };
   $('#gNew').onclick = () => { const name = $('#gName').value.trim(); if (!name) return toast('Skriv ett namn på gruppen'); run(() => api('/api/groups', { method: 'POST', body: { name } }), 'Gruppen är skapad. Ge koden till dem du vill bjuda in.'); };
+  box.onchange = e => {
+    const c = e.target.closest('[data-gsignup]'), card = e.target.closest('[data-grp]'); if (!c || !card) return;
+    run(() => api(`/api/groups/${card.dataset.grp}`, { method: 'PUT', body: { signup: c.checked } }), c.checked ? 'Länken kan skapa nya konton' : 'Länken fungerar nu bara för den som redan har konto');
+  };
   box.onclick = async e => {
     const card = e.target.closest('[data-grp]'); if (!card) return;
     const id = card.dataset.grp, g = gs.find(x => x.id === id); if (!g) return;
     const t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.glink) {
+      const url = groupLink(t.dataset.glink);
+      if (navigator.share) { try { await navigator.share({ title: 'Lekverkstan', text: `Gå med i ${g.name} i Lekverkstan`, url }); } catch {} return; }
+      try { await navigator.clipboard.writeText(url); toast('Länken är kopierad – skicka den till den du vill bjuda in', 3500); } catch { prompt('Kopiera länken:', url); }
+      return;
+    }
     if (t.dataset.gcopy) { try { await navigator.clipboard.writeText(t.dataset.gcopy); toast('Koden är kopierad'); } catch { toast(t.dataset.gcopy); } return; }
     if (t.dataset.gkick) { if (confirm(`Ta bort ${t.dataset.gname} ur ${g.name}?`)) run(() => api(`/api/groups/${id}/kick`, { method: 'POST', body: { user: t.dataset.gkick } }), `${t.dataset.gname} är borttagen ur gruppen`); return; }
     if ('gnew' in t.dataset) { if (confirm('Skapa en ny kod? Den gamla slutar gälla, men de som redan är med stannar kvar.')) run(() => api(`/api/groups/${id}`, { method: 'PUT', body: { newCode: true } }), 'Ny kod skapad'); return; }
@@ -1839,6 +1852,49 @@ async function renderGroups() {
     if ('gleave' in t.dataset) { if (confirm(`Lämna ${g.name}? ${g.mine && g.members.length > 1 ? 'Den som varit med längst blir ny ägare. ' : ''}Ni ser inte längre varandras saker om ni inte delar en annan grupp.`)) run(() => api(`/api/groups/${id}/leave`, { method: 'POST' }), 'Du har lämnat gruppen'); return; }
     if ('gdel' in t.dataset) { if (confirm(`Radera ${g.name} för alla ${g.members.length} medlemmar? Ingen förlorar sina lekar eller kort, men ni slutar se varandras saker.`)) run(() => api(`/api/groups/${id}`, { method: 'DELETE' }), 'Gruppen är raderad'); }
   };
+}
+
+const groupLink = code => location.origin + location.pathname + '#/gruppkod/' + encodeURIComponent(code);
+// inbjudningslänk #/gruppkod/KOD (inloggningen har redan fyllt i koden om kontot skapades med den)
+async function viewJoinLink(code) {
+  setNav('');
+  code = String(code || '').toUpperCase().slice(0, 20);
+  const box = $('#app');
+  if (!S.cloud || !S.v11) { box.innerHTML = '<div class="card empty">Grupper finns bara i molnversionen.</div>'; return; }
+  box.innerHTML = '<p class="muted">Kollar inbjudan…</p>';
+  const gs = await api('/api/groups').catch(() => []);
+  const have = gs.find(g => g.code === code);
+  if (have) { toast(`Du är med i ${have.name}`, 3500); location.replace('#/installningar'); return; }
+  box.innerHTML = `<div class="card" style="max-width:480px;margin:1rem auto"><h1>Inbjudan till en grupp</h1>
+    <p>Du har fått en inbjudan med koden <code>${esc(code)}</code>. I gruppen ser ni varandras publika lekar, bytesbörsen, spelkvällar och topplistan.</p>
+    <p class="row"><a class="btn" href="#/">Inte nu</a><span class="spacer"></span><button class="btn primary" id="jlGo">Gå med i gruppen</button></p></div>`;
+  $('#jlGo').onclick = async () => {
+    $('#jlGo').disabled = true;
+    try {
+      await api('/api/groups/join', { method: 'POST', body: { code } });
+      S.publicDecks = null; S.trades = null; S.events = null; S.groups = null; S.wants = null;
+      try { const st = await api('/api/state'); S.users = st.users; } catch {}
+      const g = (await api('/api/groups').catch(() => [])).find(x => x.code === code);
+      toast(g ? `Välkommen till ${g.name}!` : 'Du är med i gruppen', 3500);
+      location.replace('#/installningar');
+    } catch (e) { toast(e.message, 4500); $('#jlGo').disabled = false; }
+  };
+}
+
+// ---------- 3: vilka grupper någon delar med mig ----------
+async function loadGroups(force) {
+  if (!S.cloud || !S.v11) { S.groups = []; return; }
+  if (S.groups && !force && Date.now() - loadGroups.at < 120000) return;
+  S.groups = await api('/api/groups').catch(() => S.groups || []);
+  loadGroups.at = Date.now();
+}
+const groupsOf = uid => (S.groups || []).filter(g => g.members.some(m => m.id === uid));
+const inGroupFilter = uid => { const f = viewExplore.grp; return !f || groupsOf(uid).some(g => g.id === f); };
+const groupPills = uid => (S.groups || []).length > 1 ? groupsOf(uid).map(g => `<span class="pill grp">${esc(g.name)}</span>`).join('') : '';
+function groupFilterHtml() {
+  if ((S.groups || []).length < 2) return '';
+  if (viewExplore.grp && !S.groups.some(g => g.id === viewExplore.grp)) viewExplore.grp = '';
+  return `<select id="grpF" aria-label="Visa grupp"><option value="">Alla grupper</option>${S.groups.map(g => `<option value="${g.id}" ${viewExplore.grp === g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>`;
 }
 
 // ---------- delat: bytesbörs och publika lekar ----------
@@ -1900,20 +1956,23 @@ function viewExplore(sub) {
   setNav('utforska');
   const tabs = [['lekar', 'Publika lekar'], ['byte', 'Bytesbörs'], ['forslag', 'Bytesförslag'], ...(S.v4 ? [['bokningar', 'Bokningar' + (bookingAlerts() ? ` <span class="badge">${bookingAlerts()}</span>` : '')]] : [])];
   sub = ['byte', 'forslag', 'bokningar'].includes(sub) ? sub : 'lekar';
-  $('#app').innerHTML = `<div class="row"><h1>Utforska</h1><span class="spacer"></span><button class="btn small" id="reload">↻ Uppdatera</button></div>
+  if (S.cloud && S.v11 && !S.groups && !viewExplore.gl) { viewExplore.gl = true; loadGroups().then(() => { viewExplore.gl = false; if (location.hash.startsWith('#/utforska') && (S.groups || []).length > 1) render(); }); }
+  $('#app').innerHTML = `<div class="row"><h1>Utforska</h1><span class="spacer"></span>${sub === 'lekar' || sub === 'byte' ? groupFilterHtml() : ''}<button class="btn small" id="reload">↻ Uppdatera</button></div>
     <div class="tabs">${tabs.map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/utforska/${k}">${l}</a>`).join('')}</div><div id="ex"></div>`;
-  $('#reload').onclick = async () => { await Promise.all([loadPublic(true), loadTrades(true), loadBookings(true), loadWants(true)]); render(); };
+  $('#reload').onclick = async () => { await Promise.all([loadPublic(true), loadTrades(true), loadBookings(true), loadWants(true), loadGroups(true)]); render(); };
+  if ($('#grpF')) $('#grpF').onchange = e => { viewExplore.grp = e.target.value; render(); };
   const ex = $('#ex');
   if (!S.cloud) { ex.innerHTML = '<div class="card empty">Utforska finns bara i molnversionen.</div>'; return; }
   if (sub === 'lekar') {
     if (!S.publicDecks) { ex.innerHTML = '<p class="muted">Hämtar…</p>'; loadPublic().then(async () => { await ensureCards(S.publicDecks.flatMap(d => d.cards.filter(c => c.board !== 'side' && c.board !== 'maybe').map(c => c.name))).catch(() => {}); render(); }); return; }
-    ex.innerHTML = S.publicDecks.length ? `<div class="deck-grid">${S.publicDecks.map(d => {
+    const pubs = S.publicDecks.filter(d => inGroupFilter(d.owner));
+    ex.innerHTML = pubs.length ? `<div class="deck-grid">${pubs.map(d => {
       const art = deckArt(d), share = ownedShare(d);
       return `<a class="card deck-tile" href="#/publik/${d.id}"><div class="art" style="${art ? `background-image:url('${esc(art).replace(/'/g, '%27')}')` : ''}"></div>
-        <div class="body"><b>${esc(d.name)}</b><div class="muted small">av ${esc(d.ownerName)}</div>
+        <div class="body"><b>${esc(d.name)}</b><div class="muted small">av ${esc(d.ownerName)} ${groupPills(d.owner)}</div>
         <div class="row small" style="margin-top:.3rem"><span class="pill">${FORMAT_SV[d.format]}</span><span class="pill">${deckTotal(d)} kort</span></div>
         <div class="ownbar" title="Du äger ${Math.round(share * 100)} % av korten"><div style="width:${share * 100}%"></div></div><div class="muted small">Du äger ${Math.round(share * 100)} %</div></div></a>`;
-    }).join('')}</div>` : '<div class="card empty">Inga publika lekar än. Bocka i <b>Publik</b> på en av dina lekar så syns den här för alla.</div>';
+    }).join('')}</div>` : S.publicDecks.length ? '<div class="card empty">Ingen i den gruppen har en publik lek än.</div>' : '<div class="card empty">Inga publika lekar än. Bocka i <b>Publik</b> på en av dina lekar så syns den här för alla.</div>';
     return;
   }
   if (sub === 'bokningar') return tabBookings(ex);
@@ -1927,7 +1986,7 @@ function viewExplore(sub) {
   const need = {};
   for (const d of S.decks) for (const m of missingCards(d)) (need[m.name.toLowerCase()] = need[m.name.toLowerCase()] || new Set()).add(d.name);
   const opt = viewExplore.opt || (viewExplore.opt = { onlyNeed: true, q: '' });
-  const rows = S.trades.filter(t => (!opt.onlyNeed || need[t.name.toLowerCase()]) && (!opt.q || t.name.toLowerCase().includes(opt.q.toLowerCase())))
+  const rows = S.trades.filter(t => inGroupFilter(t.owner) && (!opt.onlyNeed || need[t.name.toLowerCase()]) && (!opt.q || t.name.toLowerCase().includes(opt.q.toLowerCase())))
     .sort((a, b) => a.name.localeCompare(b.name) || a.ownerName.localeCompare(b.ownerName));
   const mine = Object.keys(S.trade).length;
   // min senaste aktiva bokning på just den användarens kort
@@ -1938,7 +1997,7 @@ function viewExplore(sub) {
     ${rows.length ? `<div class="table-scroll"><table><thead><tr><th>Kort</th><th>Har till byte</th><th class="num">Antal</th><th class="num" title="${priceWhat()}">Pris ca</th><th>Behövs i</th>${S.v4 ? '<th></th>' : ''}</tr></thead><tbody>
       ${rows.map((t, i) => {
         const foil = (t.prints || []).filter(p => p.foil), b = S.v4 && myBooking(t);
-        return `<tr><td><span data-img="${esc(S.cards[t.name]?.image || scryImg(t.name))}">${esc(t.name)}</span>${foil.length ? ` <span class="foil" title="Har foil: ${esc(foil.map(printLabel).join(', '))}">✦</span>` : ''}</td><td>${esc(t.ownerName)}</td><td class="num">${t.qty}</td>
+        return `<tr><td><span data-img="${esc(S.cards[t.name]?.image || scryImg(t.name))}">${esc(t.name)}</span>${foil.length ? ` <span class="foil" title="Har foil: ${esc(foil.map(printLabel).join(', '))}">✦</span>` : ''}</td><td>${esc(t.ownerName)} ${groupPills(t.owner)}</td><td class="num">${t.qty}</td>
         <td class="num small">${krE(S.cards[t.name]?.eur)}</td>
         <td class="small muted">${need[t.name.toLowerCase()] ? esc([...need[t.name.toLowerCase()]].join(', ')) : ''}</td>
         ${S.v4 ? `<td>${b ? `<span class="pill ${b.status === 'accepted' ? 'good' : ''}">${BOOK_SV[b.status]}</span>` : `<button class="btn small" data-book="${i}">Boka</button>`}</td>` : ''}</tr>`;
@@ -3606,7 +3665,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 // ---------- tema ----------
 // färgteman efter Magics fem färger: [nyckel, namn, färgprov]
 const COLOR_THEMES = [['plains', 'Vit', '#f3e3b0'], ['island', 'Blå', '#2f7fd0'], ['swamp', 'Svart', '#2a2430'], ['mountain', 'Röd', '#d9483a'], ['forest', 'Grön', '#2f9a52']];
-const THEMES = ['light', 'dark', ...COLOR_THEMES.map(t => t[0])];
+// gillen: två färger var
+const GUILD_THEMES = [['azorius', 'Azorius', 'linear-gradient(135deg, #f3e3b0 50%, #2f7fd0 50%)'], ['dimir', 'Dimir', 'linear-gradient(135deg, #2f7fd0 50%, #2a2430 50%)'], ['rakdos', 'Rakdos', 'linear-gradient(135deg, #2a2430 50%, #d9483a 50%)'], ['gruul', 'Gruul', 'linear-gradient(135deg, #d9483a 50%, #2f9a52 50%)'], ['selesnya', 'Selesnya', 'linear-gradient(135deg, #2f9a52 50%, #f3e3b0 50%)'], ['orzhov', 'Orzhov', 'linear-gradient(135deg, #f3e3b0 50%, #2a2430 50%)'], ['izzet', 'Izzet', 'linear-gradient(135deg, #2f7fd0 50%, #d9483a 50%)'], ['golgari', 'Golgari', 'linear-gradient(135deg, #2a2430 50%, #2f9a52 50%)'], ['boros', 'Boros', 'linear-gradient(135deg, #d9483a 50%, #f3e3b0 50%)'], ['simic', 'Simic', 'linear-gradient(135deg, #2f9a52 50%, #2f7fd0 50%)']];
+const THEMES = ['light', 'dark', ...COLOR_THEMES.map(t => t[0]), ...GUILD_THEMES.map(t => t[0])];
 function setTheme(t) {
   if (t !== 'auto' && !THEMES.includes(t)) t = 'auto';
   try { if (t === 'auto') localStorage.removeItem('lv-theme'); else localStorage.setItem('lv-theme', t); } catch {}
@@ -4116,6 +4177,7 @@ function render() {
   else if (h.startsWith('/bygg')) viewBuild();
   else if (h.startsWith('/regler')) viewRules(h.split('/')[2]);
   else if (h.startsWith('/draft')) { location.replace('#/matcher/turnering'); return; }
+  else if ((m = h.match(/^\/gruppkod\/([\w-]{4,20})$/))) viewJoinLink(decodeURIComponent(m[1]));
   else if (h.startsWith('/samling')) viewCollection();
   else if (h.startsWith('/installningar')) viewSettings();
   else viewDecks();
@@ -4142,6 +4204,7 @@ addEventListener('hashchange', () => { $('#preview').hidden = true; render(); })
   Object.assign(S, st);
   if (!S.cloud) $$('[data-nav=utforska]').forEach(a => a.remove());
   if (S.cloud && lifeState()?.room) roomJoin(lifeState().room);
+  if (S.cloud && typeof tourState === 'function' && tourState()?.room) tourConnect(tourState().room);
   if (S.cloud && S.v4 && !S.offline) loadBookings().then(() => location.hash.startsWith('#/utforska') && render());
   if (S.cloud && S.v7 && !S.offline) loadEvents().then(updateBell);
   if (S.cloud && !S.offline && !S.profile?.name) setTimeout(askName, 600);
