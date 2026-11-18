@@ -25,6 +25,51 @@
   --bar: #9d86ff; --gold: #e0b84c;
   --shadow: none;
 }
+/* ---------- färgteman efter Magics fem färger (väljs under Inställningar) ---------- */
+:root[data-theme="plains"] {
+  --bg: #f7f1e3; --surface: #fffaf0; --surface-2: #f0e7d2; --border: #e0d3b4;
+  --text: #2b2414; --text-2: #6b5d3f; --muted: #978a6b;
+  --accent: #a87a12; --accent-ink: #ffffff; --accent-soft: #f5e6bf;
+  --good: #3d7a2a; --warn: #a35c00; --bad: #b3261e;
+  --bar: #c8961e; --gold: #a87a12;
+  --shadow: 0 1px 3px rgba(80, 60, 10, .1); color-scheme: light;
+}
+:root[data-theme="island"] {
+  --bg: #0d1726; --surface: #13223a; --surface-2: #1b2e4b; --border: #27405f;
+  --text: #e6f0fb; --text-2: #a9bed6; --muted: #7389a3;
+  --accent: #4fb3ff; --accent-ink: #0d1726; --accent-soft: #173b5e;
+  --good: #5fd0a0; --warn: #f0b860; --bad: #ff7b7b;
+  --bar: #4fb3ff; --gold: #e0c06a;
+  --shadow: none; color-scheme: dark;
+}
+:root[data-theme="swamp"] {
+  --bg: #0b0a0c; --surface: #151317; --surface-2: #1e1b21; --border: #2d2930;
+  --text: #e8e3e8; --text-2: #aaa1ab; --muted: #7a717b;
+  --accent: #b9a7c9; --accent-ink: #0b0a0c; --accent-soft: #2a2430;
+  --good: #8fc79a; --warn: #d9b25a; --bad: #e0707a;
+  --bar: #9f8bb3; --gold: #c9aa5a;
+  --shadow: none; color-scheme: dark;
+}
+:root[data-theme="mountain"] {
+  --bg: #1a0f0c; --surface: #261612; --surface-2: #331e18; --border: #4a2b22;
+  --text: #f6e9e3; --text-2: #d0b3a8; --muted: #9a7a6f;
+  --accent: #ff6a3d; --accent-ink: #1a0f0c; --accent-soft: #4a2015;
+  --good: #7fd08a; --warn: #ffbf4d; --bad: #ff7b72;
+  --bar: #ff6a3d; --gold: #f0b84c;
+  --shadow: none; color-scheme: dark;
+}
+:root[data-theme="forest"] {
+  --bg: #0c1610; --surface: #132219; --surface-2: #1a2e22; --border: #284432;
+  --text: #e5f2e8; --text-2: #a8c6b0; --muted: #739381;
+  --accent: #5fd37f; --accent-ink: #0c1610; --accent-soft: #1b3d27;
+  --good: #7fe0a0; --warn: #e8c05a; --bad: #ff8a7a;
+  --bar: #5fd37f; --gold: #d9bb5c;
+  --shadow: none; color-scheme: dark;
+}
+.themes { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+.themes button { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .7rem .35rem .4rem; border-radius: 99px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; font: inherit; font-size: .9rem; }
+.themes button.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); font-weight: 600; }
+.themes .sw { width: 1.3rem; height: 1.3rem; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .25); }
 :root { color-scheme: light dark; }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }

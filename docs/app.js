@@ -1747,6 +1747,7 @@ function viewSettings() {
   $('#app').innerHTML = `<div class="grid settings" style="max-width:640px"><h1>Inställningar</h1>
     <div class="card"><h2>Utseende</h2>
       <div class="seg" id="themeSeg" role="group" aria-label="Tema">${[['auto', 'Som telefonen'], ['light', '☀️ Ljust'], ['dark', '🌙 Mörkt']].map(([k, l]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="themes" role="group" aria-label="Färgtema">${COLOR_THEMES.map(([k, l, c]) => `<button data-theme-set="${k}" class="${themeNow() === k ? 'on' : ''}"><span class="sw" style="background:${c}"></span>${l}</button>`).join('')}</div>
       <label class="chk"><input type="checkbox" id="helpAll" ${helpOpen() ? 'checked' : ''}> Visa förklaringar direkt i stället för bakom ⓘ</label></div>
     ${S.cloud ? `<div class="card"><h2>Ditt namn</h2>
       <p class="small muted">Syns för ${S.v11 ? 'dem i dina grupper' : 'andra inloggade'} på dina publika lekar, i bytesbörsen och i livräknaren. Du är inloggad som ${esc(S.profile.email || '')}.</p>
@@ -1775,7 +1776,7 @@ function viewSettings() {
       : '<p class="small" style="margin:0">På iPhone: tryck på Dela i Safari och välj <b>Lägg till på hemskärmen</b>. På Android: öppna menyn i Chrome och välj <b>Installera app</b>.</p>'}</div>
   </div>`;
   $('#helpAll').onchange = e => { try { localStorage.setItem('lv-help', e.target.checked ? '1' : '0'); } catch {} render(); };
-  $('#themeSeg').onclick = e => { const b = e.target.closest('[data-theme-set]'); if (b) { setTheme(b.dataset.themeSet); render(); } };
+  $('#app').querySelectorAll('#themeSeg, .themes').forEach(g => { g.onclick = e => { const b = e.target.closest('[data-theme-set]'); if (b) { setTheme(b.dataset.themeSet); render(); } }; });
   $('#alarmSel').onchange = e => { try { localStorage.setItem('lv-alarm', String(+e.target.value)); } catch {} updateBell(); };
   $('#bkDown').onclick = () => { downloadBackup(); toast('Säkerhetskopian laddas ner'); setTimeout(render, 300); };
   $('#bkFile').onchange = e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) restoreFile(f); };
@@ -3603,11 +3604,16 @@ setInterval(() => { if (document.visibilityState === 'visible') syncNotes(); }, 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNotes(); });
 
 // ---------- tema ----------
+// färgteman efter Magics fem färger: [nyckel, namn, färgprov]
+const COLOR_THEMES = [['plains', 'Vit', '#f3e3b0'], ['island', 'Blå', '#2f7fd0'], ['swamp', 'Svart', '#2a2430'], ['mountain', 'Röd', '#d9483a'], ['forest', 'Grön', '#2f9a52']];
+const THEMES = ['light', 'dark', ...COLOR_THEMES.map(t => t[0])];
 function setTheme(t) {
+  if (t !== 'auto' && !THEMES.includes(t)) t = 'auto';
   try { if (t === 'auto') localStorage.removeItem('lv-theme'); else localStorage.setItem('lv-theme', t); } catch {}
   if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
-  const dark = t === 'dark' || (t === 'auto' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-  $('meta[name=theme-color]')?.setAttribute('content', dark ? '#1f1a2e' : '#ffffff');
+  // statusfältet på telefonen följer temats bakgrund
+  const bar = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+  $('meta[name=theme-color]')?.setAttribute('content', bar || '#1f1a2e');
 }
 const themeNow = () => document.documentElement.dataset.theme || 'auto';
 setTheme(themeNow());

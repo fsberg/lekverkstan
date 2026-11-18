@@ -1,7 +1,7 @@
 // Lekverkstan service worker: appen och kortbilder finns kvar utan nät.
 // Appens egna filer hämtas alltid från nätet först (så att uppdateringar syns direkt),
 // bibliotek och kortbilder tas från cachen först.
-const APP = 'lv-app-4', LIB = 'lv-lib-1', IMG = 'lv-img-1';
+const APP = 'lv-app-5', LIB = 'lv-lib-1', IMG = 'lv-img-1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'tour.js', 'backend.js', 'config.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {
