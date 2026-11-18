@@ -3288,6 +3288,27 @@ const RULES_SV = {
       <li><b>Triggade förmågor</b> ("when", "whenever", "at") läggs på stacken nästa gång någon skulle få prioritet. Triggar flera samtidigt väljer varje spelare ordningen på sina egna.</li>
       <li>Ett spell som motverkas (<i>countered</i>) gör ingenting och läggs på kyrkogården.</li>
     </ul>`,
+  modern: `<h2>Modern i korthet</h2>
+    <ul>
+      <li><b>Leken:</b> minst 60 kort. Högst 4 exemplar av varje kort, utom basländer och kort som säger något annat.</li>
+      <li><b>Sidobräda:</b> upp till 15 kort. Mellan partierna i en match får du byta kort mellan leken och sidobrädan, så länge leken har minst 60 kort.</li>
+      <li><b>Vilka kort:</b> kort från Eighth Edition (2003) och framåt, plus utgåvor gjorda direkt för Modern som Modern Horizons. Formatet roterar inte. Kolla alltid <a href="#/regler/bannade">bannlistan</a>.</li>
+      <li><b>Start:</b> 20 liv, dra 7 kort. London-mulligan: dra 7 nya och lägg lika många kort som du tagit mulligan under biblioteket. Ingen gratis mulligan.</li>
+      <li><b>Första turen:</b> den som börjar drar inget kort.</li>
+      <li><b>Matcher:</b> spelas oftast bäst av tre partier. Förloraren av förra partiet väljer vem som börjar nästa.</li>
+      <li><b>Förlust:</b> 0 liv, 10 giftmarkörer, eller att du ska dra ur ett tomt bibliotek.</li>
+    </ul>`,
+  formats: `<h2>Andra format</h2>
+    <table><tbody>
+      <tr><td><b>Standard</b></td><td>60 kort, högst 4 av varje, 15 i sidobrädan, 20 liv. Bara de senaste årens utgåvor – formatet roterar, så gamla utgåvor faller bort en gång om året.</td></tr>
+      <tr><td><b>Pioneer</b></td><td>Som Modern men med kort från Return to Ravnica (2012) och framåt. Roterar inte.</td></tr>
+      <tr><td><b>Pauper</b></td><td>60 kort, högst 4 av varje. Bara kort som har tryckts som <i>common</i>. Billigt att spela.</td></tr>
+      <tr><td><b>Legacy</b></td><td>60 kort, högst 4 av varje. Nästan alla kort som någonsin gjorts är tillåtna, utom de på bannlistan.</td></tr>
+      <tr><td><b>Vintage</b></td><td>Alla kort är tillåtna, men vissa är <i>restricted</i>: högst 1 exemplar.</td></tr>
+      <tr><td><b>Limited</b></td><td>Draft eller sealed: du bygger leken av kort du öppnar på plats. Minst 40 kort, så många av varje som du har, basländer får du låna fritt. 20 liv.</td></tr>
+      <tr><td><b>Brawl</b></td><td>Som Commander, men främst på MTG Arena: 60 kort med Standard-kort. Historic Brawl har 100 kort och fler tillåtna kort.</td></tr>
+    </tbody></table>
+    <p class="small muted">Manakeep bygger och kontrollerar Commander- och Modern-lekar.</p>`,
   brackets: `<h2>Commander Brackets</h2>
     <p class="muted">Wizards indelning för att hitta jämna matcher. Prata alltid ihop er före matchen – siffran är en hjälp, inte en regel.</p>
     <table><tbody>
@@ -3398,12 +3419,23 @@ function hiliteRule(html, words) {
 
 function viewRules(sub) {
   setNav('regler');
-  const tabs = [['commander', 'Commander'], ['tur', 'Turen och stacken'], ['brackets', 'Brackets'], ['ord', 'Ordlista'], ['bok', 'Regelboken'], ['bannade', 'Bannade kort']];
-  sub = tabs.some(t => t[0] === sub) ? sub : 'commander';
+  const tabs = [['format', 'Format'], ['tur', 'Turen och stacken'], ['brackets', 'Brackets'], ['ord', 'Ordlista'], ['bok', 'Regelboken'], ['bannade', 'Bannade kort']];
+  // gamla länkar #/regler/commander och #/regler/modern visar formatfliken
+  if (sub === 'commander' || sub === 'modern' || sub === 'formats') { viewRules.fmt = sub; sub = 'format'; }
+  sub = tabs.some(t => t[0] === sub) ? sub : 'format';
   $('#app').innerHTML = `<div class="row"><h1>Regler</h1></div>
     <div class="tabs">${tabs.map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/regler/${k}">${l}</a>`).join('')}</div><div id="rl"></div>`;
   const rl = $('#rl');
-  if (sub === 'commander' || sub === 'tur' || sub === 'brackets') {
+  if (sub === 'format') {
+    const fmts = [['commander', 'Commander'], ['modern', 'Modern'], ['formats', 'Andra format']];
+    const f = fmts.some(x => x[0] === viewRules.fmt) ? viewRules.fmt : 'commander';
+    rl.innerHTML = `<div class="seg" id="fmtSeg" style="margin-bottom:.8rem">${fmts.map(([k, l]) => `<button data-fmt="${k}" class="${k === f ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="card rules" style="max-width:820px">${RULES_SV[f]}
+      <p class="small muted">Förenklad sammanfattning. Det exakta står i <a href="#/regler/bok">regelboken</a>.</p></div>`;
+    $('#fmtSeg').onclick = e => { const b = e.target.closest('[data-fmt]'); if (b) { viewRules.fmt = b.dataset.fmt; render(); } };
+    return;
+  }
+  if (sub === 'tur' || sub === 'brackets') {
     rl.innerHTML = `<div class="card rules" style="max-width:820px">${RULES_SV[sub === 'tur' ? 'turn' : sub]}
       <p class="small muted">Förenklad sammanfattning. Det exakta står i <a href="#/regler/bok">regelboken</a>.</p></div>`;
     return;
@@ -3444,18 +3476,19 @@ function viewRules(sub) {
       <div class="row"><input type="search" id="rq" placeholder="Sök på engelska, t.ex. commander tax, eller ett regelnummer som 903.8" value="${esc(q)}" style="flex:1"></div>
       <p class="small muted">Comprehensive Rules${R.effective ? `, gäller från ${esc(R.effective)}` : ''}. <a href="${esc(R.url)}" target="_blank" rel="noopener">Originalet hos Wizards</a></p>
       ${q ? (hits.length ? `${note ? `<p class="small warn">${esc(note)}</p>` : ''}${hits.map(r => `<div class="rule"><a href="#" data-rule="${r.n}"><b>${r.n}</b></a> <span class="muted small">${esc(R.sections[r.sec] || '')}</span><div>${hiliteRule(ruleLinks(r.t), words)}</div></div>`).join('')}` : '<p class="muted">Inga regler matchar.</p>')
-        : `<h3>Snabbval</h3><div class="row small" style="flex-wrap:wrap">${[['903', 'Commander'], ['702', 'Nyckelord'], ['500', 'Turens delar'], ['506', 'Strid'], ['405', 'Stacken'], ['117', 'Prioritet'], ['104', 'Att vinna och förlora'], ['704', 'State-based actions'], ['613', 'Effekters ordning (lager)'], ['800', 'Multiplayer']].map(([n, l]) => `<a href="#" class="pill" data-rule="${n}">${n} ${l}</a>`).join('')}</div>`}</div>`;
+        : `<h3>Snabbval</h3><div class="row small" style="flex-wrap:wrap">${[['100', 'Lekar och format'], ['903', 'Commander'], ['702', 'Nyckelord'], ['500', 'Turens delar'], ['506', 'Strid'], ['405', 'Stacken'], ['117', 'Prioritet'], ['104', 'Att vinna och förlora'], ['704', 'State-based actions'], ['613', 'Effekters ordning (lager)'], ['800', 'Multiplayer']].map(([n, l]) => `<a href="#" class="pill" data-rule="${n}">${n} ${l}</a>`).join('')}</div>`}</div>`;
     const inp = $('#rq');
     inp.oninput = () => { viewRules.q = inp.value; clearTimeout(viewRules.t); viewRules.t = setTimeout(() => { render(); const i = $('#rq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 300); };
     rl.onclick = e => { const a = e.target.closest('[data-rule]'); if (a) { e.preventDefault(); viewRules.q = a.dataset.rule; render(); } };
     return;
   }
   // bannade kort och game changers från Scryfall
-  const lists = [['banned:commander', 'Bannade i Commander'], ['banned:modern', 'Bannade i Modern'], ['is:gamechanger', 'Game changers (Commander)']];
+  const lists = [['banned:commander', 'Commander'], ['is:gamechanger', 'Game changers'], ['banned:modern', 'Modern'], ['banned:standard', 'Standard'], ['banned:pioneer', 'Pioneer'],
+    ['banned:pauper', 'Pauper'], ['banned:legacy', 'Legacy'], ['restricted:vintage', 'Vintage (restricted)']];
   const which = viewRules.ban || lists[0][0];
   const data = (viewRules.banData = viewRules.banData || {})[which];
   rl.innerHTML = `<div class="card"><div class="seg" id="banSeg">${lists.map(([k, l]) => `<button data-ban="${k}" class="${k === which ? 'on' : ''}">${l}</button>`).join('')}</div>
-    ${data ? `<p class="small muted">${data.length} kort${which === 'is:gamechanger' ? '. Game changers påverkar lekens bracket.' : ''}</p>
+    ${data ? `<p class="small muted">${data.length} kort${which === 'is:gamechanger' ? '. Game changers påverkar en Commander-leks bracket.' : which.startsWith('restricted') ? ' – högst ett exemplar i leken.' : ' bannade.'}</p>
       <ul class="vgrid">${data.map(c => `<li data-name="${esc(c.name)}"><img loading="lazy" src="${esc(c.thumb)}" alt="${esc(c.name)}" data-img="${esc(c.image)}" data-open style="cursor:pointer"><div class="small">${esc(c.name)}</div></li>`).join('')}</ul>`
       : '<p class="muted">Hämtar från Scryfall…</p>'}</div>`;
   if (!data) api('/api/search?max=175&q=' + encodeURIComponent(which)).then(r => { viewRules.banData[which] = r.cards.sort((a, b) => a.name.localeCompare(b.name)); for (const c of r.cards) S.cards[c.name] = S.cards[c.name] || c; render(); }).catch(e => toast(e.message, 4000));
