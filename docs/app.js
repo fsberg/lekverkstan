@@ -2181,6 +2181,7 @@ function deckRecord(games) {
 }
 function viewGames(sub, arg) {
   if (sub === 'analys') return viewAnalysis(arg ? decodeURIComponent(arg) : '');
+  if (sub === 'turnering') return viewTourPage();
   sub = S.cloud && S.v7 && ['topplista', 'spelkvall'].includes(sub) ? sub : '';
   if (sub) return viewGroup(sub);
   setNav('matcher');
@@ -2189,7 +2190,7 @@ function viewGames(sub, arg) {
   for (const g of S.games) (byDeck[g.deck_id || 'x:' + g.deck_name] = byDeck[g.deck_id || 'x:' + g.deck_name] || { name: g.deck_name, games: [] }).games.push(g);
   const stats = Object.values(byDeck).map(x => ({ ...x, ...deckRecord(x.games) })).sort((a, b) => b.n - a.n);
   const total = deckRecord(S.games);
-  $('#app').innerHTML = `<div id="gm"><div class="row"><h1>Matcher</h1><span class="spacer"></span><span class="muted">${total.n} matcher · ${total.pct} % vinster</span>
+  $('#app').innerHTML = `<div id="gm"><div class="row"><h1>Spela</h1><span class="spacer"></span><span class="muted">${total.n} matcher · ${total.pct} % vinster</span>
       <a class="btn primary" href="#/liv">▶ Livräknare${lifeState()?.players ? ' (pågår)' : ''}</a></div>
     ${gameTabs('')}
     <div class="grid cols-2" style="margin-top:1rem">
@@ -2318,7 +2319,7 @@ function viewAnalysis(sel) {
   const last10 = deckRecord(asc.slice(-10));
   if (asc.length >= 15) tips.push(`Senaste 10 matcherna: ${last10.pct} % vinster, mot ${tot.pct} % totalt.`);
   if (perDeck.length >= 2) { const s = perDeck.filter(r => r.n >= 3).sort((a, b) => b.pct - a.pct); if (s.length >= 2) tips.push(`Bästa leken är <b>${esc(s[0].label)}</b> (${s[0].pct} % på ${s[0].n} matcher).`); }
-  $('#app').innerHTML = `<div class="row"><h1>Matcher</h1></div>${gameTabs('analys')}
+  $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs('analys')}
     <div class="row" style="margin-top:1rem"><label class="small">Lek <select id="anDeck"><option value="">Alla lekar</option>${Object.entries(decks).sort((a, b) => a[1].localeCompare(b[1])).map(([k, n]) => `<option value="${esc(k)}" ${k === sel ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
       ${sel && !sel.startsWith('x:') && S.decks.some(d => d.id === sel) ? `<a class="btn small" href="#/lek/${esc(sel)}">Öppna leken</a>` : ''}</div>
     ${!games.length ? '<div class="card empty" style="margin-top:1rem">Inga matcher loggade än. Logga matcher under Mina matcher eller avsluta en match i livräknaren.</div>' : `
@@ -4060,10 +4061,15 @@ function tabEvents(el) {
 }
 function viewGroup(sub) {
   setNav('matcher');
-  $('#app').innerHTML = `<div class="row"><h1>Matcher</h1></div>${gameTabs(sub)}<div id="grp"></div>`;
+  $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs(sub)}<div id="grp"></div>`;
   (sub === 'topplista' ? tabLeader : tabEvents)($('#grp'));
 }
-const gameTabs = sub => `<div class="tabs">${[['', 'Mina matcher'], ['analys', 'Analys'], ...(S.cloud && S.v7 ? [['topplista', 'Topplista'], ['spelkvall', 'Spelkväll']] : [])].map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/matcher${k ? '/' + k : ''}">${l}</a>`).join('')}</div>`;
+function viewTourPage() {
+  setNav('matcher');
+  $('#app').innerHTML = `<div class="row"><h1>Spela</h1></div>${gameTabs('turnering')}<div id="grp" style="margin-top:1rem"></div>`;
+  tabTour($('#grp'));
+}
+const gameTabs = sub => `<div class="tabs">${[['', 'Mina matcher'], ['analys', 'Analys'], ['turnering', 'Turnering'], ...(S.cloud && S.v7 ? [['topplista', 'Topplista'], ['spelkvall', 'Spelkväll']] : [])].map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/matcher${k ? '/' + k : ''}">${l}</a>`).join('')}</div>`;
 
 function render() {
   const h = location.hash.slice(1) || '/';
@@ -4079,7 +4085,7 @@ function render() {
   else if (h.startsWith('/matcher')) viewGames(h.split('/')[2], h.split('/')[3]);
   else if (h.startsWith('/bygg')) viewBuild();
   else if (h.startsWith('/regler')) viewRules(h.split('/')[2]);
-  else if (h.startsWith('/draft') && typeof viewDraft === 'function') viewDraft(h.split('/')[2]);
+  else if (h.startsWith('/draft')) { location.replace('#/matcher/turnering'); return; }
   else if (h.startsWith('/samling')) viewCollection();
   else if (h.startsWith('/installningar')) viewSettings();
   else viewDecks();
