@@ -22,7 +22,7 @@ function cleanTour(t) {
   if (!t || !Array.isArray(t.players) || t.players.length < 2) return null;
   const players = t.players.slice(0, 16).map(x => tClip(x, 20));
   const n = players.length;
-  const pairs = (Array.isArray(t.pairs) ? t.pairs : []).slice(0, 8).map(r => (Array.isArray(r) ? r : []).slice(0, 8).map(p => ({ a: num(p?.a, 0, n - 1), b: p?.b === -1 ? -1 : num(p?.b, 0, n - 1), res: /^[0-3]-[0-3](-[0-3])?$/.test(p?.res) ? p.res : null })));
+  const pairs = (Array.isArray(t.pairs) ? t.pairs : []).slice(0, 8).map(r => (Array.isArray(r) ? r : []).slice(0, 8).map(p => ({ a: num(p?.a, 0, n - 1), b: p?.b === -1 ? -1 : num(p?.b, 0, n - 1), res: /^[0-3]-[0-3](-[0-3])?$/.test(p?.res) ? p.res : null, ...(Array.isArray(p?.g) ? { g: [0, 1, 2].map(k => num(p.g[k], 0, 3)) } : {}) })));
   if (!pairs.length) return null;
   return {
     id: /^\d{13}$/.test(String(t.id)) ? String(t.id) : String(Date.now()),
@@ -31,12 +31,13 @@ function cleanTour(t) {
     uids: players.map((_, i) => (UUID_RE.test(t.uids?.[i]) ? t.uids[i] : '')),
     rounds: num(t.rounds, 1, 8, 3), pairs,
     room: /^[A-Z0-9]{6}$/.test(t.room || '') ? t.room : '',
+    life: [20, 25, 30, 40].includes(+t.life) ? +t.life : 20,
   };
 }
 // konto för ett namn: bland dem man delar grupp med, eller en själv
 const tourUid = name => (S.users || []).find(u => u.name === name)?.id || (S.profile?.name && S.profile.name.trim() === name ? S.profile.id || '' : '');
 function newTour(names) {
-  const n = names.length, t = { id: String(Date.now()), ver: 0, players: names.slice(), uids: names.map(x => (S.cloud ? tourUid(x) : '')), rounds: n <= 2 ? 1 : n <= 4 ? 2 : n <= 8 ? 3 : 4, pairs: [], room: '' };
+  const n = names.length, t = { id: String(Date.now()), ver: 0, players: names.slice(), uids: names.map(x => (S.cloud ? tourUid(x) : '')), rounds: n <= 2 ? 1 : n <= 4 ? 2 : n <= 8 ? 3 : 4, pairs: [], room: '', life: 20 };
   const order = names.map((_, i) => i);
   for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
   t.pairs.push(pairUp(t, order)); return t;
@@ -76,11 +77,13 @@ function pairUp(t, order) {
 function setResult(t, r, i, res) {
   const p = t?.pairs[r]?.[i]; if (!p || p.b === -1) return false;
   if (res !== null && !/^[0-3]-[0-3](-[0-3])?$/.test(res)) return false;
-  p.res = res; return true;
+  p.res = res; delete p.g; return true; // satt för hand: partiräkningen gäller inte längre
 }
 
 // ---------- dela live: alla som följer ser parningar och tabell och kan fylla i resultat ----------
 const tourRoom = { ch: null, code: '', waiting: false, err: false };
+// startliv för turneringens partier (20 som i Modern, går att ändra)
+const tourLife = () => num(tourState()?.life, 1, 99, 20);
 const tourOnPage = () => location.hash === '#/matcher/turnering';
 function tourSend(m) { tourRoom.ch?.send({ type: 'broadcast', event: 'm', payload: { ...m, from: CID } }); }
 const tourPublic = t => { const { room, ...rest } = t; return rest; };
@@ -117,6 +120,22 @@ function tourCommit() {
   const t = tourState.s;
   if (t) { t.ver++; if (t.room) tourSend({ t: 'state', s: tourPublic(t) }); }
   tourSave(); render(); tourAutoLog();
+}
+
+// ---------- partier från livräknaren ----------
+// ref = { id, r, i }, w = 0 (första spelaren), 1 (andra) eller 'draw'. Bäst av tre: klart vid två vunna eller tre spelade.
+function tourGameDone(ref, w) {
+  const t = tourState(), p = t && t.id === ref.id ? t.pairs[ref.r]?.[ref.i] : null;
+  if (!p || p.b === -1) return toast('Turneringsmatchen finns inte längre – resultatet sparades inte', 4000);
+  if (p.res) return toast('Matchen har redan ett resultat i turneringen', 4000);
+  const g = p.g = p.g || [0, 0, 0];
+  if (w === 'draw') g[2]++; else g[w]++;
+  const a = t.players[p.a], b = t.players[p.b], score = `${g[0]}–${g[1]}${g[2] ? `–${g[2]}` : ''}`;
+  if (g[0] >= 2 || g[1] >= 2 || g[0] + g[1] + g[2] >= 3) {
+    p.res = `${g[0]}-${g[1]}${g[2] ? `-${g[2]}` : ''}`;
+    toast(g[0] === g[1] ? `${a} mot ${b} slutade oavgjort ${score}` : `${g[0] > g[1] ? a : b} vann matchen ${score}`, 4500);
+  } else toast(`${w === 'draw' ? 'Oavgjort parti' : (w === 0 ? a : b) + ' vann partiet'}. Ställning ${score} – spela nästa parti`, 4500);
+  tourCommit();
 }
 
 // ---------- färdiga matcher till spelloggen ----------
@@ -204,25 +223,29 @@ function tabTour(el) {
   const shareBar = !live ? '' : t.room
     ? `<div class="row small tour-live"><span>📡 Delas live, kod <code style="font-size:1rem;letter-spacing:.05em">${esc(t.room)}</code>. De andra väljer <b>Följ en delad turnering</b> och skriver koden.</span><span class="spacer"></span><button class="btn small" id="tUnshare">Sluta dela</button></div>`
     : `<div class="row small tour-live"><span class="muted">Visa turneringen i allas telefoner – alla kan fylla i resultat.</span><span class="spacer"></span><button class="btn small" id="tShare">📡 Dela live</button></div>`;
-  el.innerHTML = `${shareBar}<div class="card"><div class="row"><h2 style="margin:0">Runda ${cur + 1} av ${t.rounds}</h2><span class="spacer"></span><button class="btn small" id="tRounds">Antal rundor</button></div>
+  el.innerHTML = `${shareBar}<div class="card"><div class="row"><h2 style="margin:0">Runda ${cur + 1} av ${t.rounds}</h2><span class="spacer"></span><button class="btn small" id="tLife" title="Startliv i livräknaren">❤ ${tourLife()}</button><button class="btn small" id="tRounds">Antal rundor</button></div>
       <ul class="dlist dpairs">${t.pairs[cur].map((p, i) => p.b === -1 ? `<li class="row"><b>${esc(t.players[p.a])}</b><span class="muted">har bye (räknas som 2–0)</span></li>`
-        : `<li><div class="row"><b>${esc(t.players[p.a])}</b>${acct(p.a)}<span class="muted">mot</span><b>${esc(t.players[p.b])}</b>${acct(p.b)}<span class="spacer"></span><button class="btn small" data-life="${i}" title="Livräknare med 20 liv">❤ Liv</button></div>
+        : `<li><div class="row"><b>${esc(t.players[p.a])}</b>${acct(p.a)}<span class="muted">mot</span><b>${esc(t.players[p.b])}</b>${acct(p.b)}${p.g && !p.res ? `<span class="pill">Partier ${p.g[0]}–${p.g[1]}${p.g[2] ? `–${p.g[2]}` : ''}</span>` : ''}<span class="spacer"></span>${p.res ? '' : `<button class="btn small" data-life="${i}" title="Spela partiet i livräknaren – resultatet förs in här">❤ ${p.g ? 'Nästa parti' : 'Liv'}</button>`}</div>
           <div class="row" style="margin-top:.3rem">${resBtns(cur, i, p)}${p.res ? `<button class="btn small" data-r="${cur}" data-i="${i}" data-res="">Ångra</button>` : ''}</div></li>`).join('')}</ul>
-      ${done ? (last ? '<p><b>Turneringen är klar! 🏆</b></p><p class="row"><button class="btn small" id="tExtra">Spela en runda till</button></p>' : `<p class="row"><span class="spacer"></span><button class="btn primary" id="tNextR">Para runda ${cur + 2}</button></p>`) : '<p class="muted small">Tryck resultatet ur den förstas perspektiv, t.ex. 2–1 = den första vann två partier mot ett.</p>'}
+      ${done ? (last ? '<p><b>Turneringen är klar! 🏆</b></p><p class="row"><button class="btn small" id="tExtra">Spela en runda till</button></p>' : `<p class="row"><span class="spacer"></span><button class="btn primary" id="tNextR">Para runda ${cur + 2}</button></p>`) : '<p class="muted small">Spela partierna med ❤ Liv så räknas ställningen ut, eller tryck resultatet direkt ur den förstas perspektiv (2–1 = den första vann två partier mot ett).</p>'}
       ${S.cloud && S.v12 ? '<p class="muted small">✓ = har konto. När en runda är klar sparas matcherna i spelloggen och topplistan hos dem.</p>' : ''}</div>
     <div class="card" style="margin-top:1rem"><h2 style="margin-top:0">Tabell</h2>
       <table class="dstand"><thead><tr><th>#</th><th>Spelare</th><th>P</th><th>V-F-O</th><th title="Motståndarnas matchvinst-%">OMW</th><th title="Egen partivinst-%">GW</th><th title="Motståndarnas partivinst-%">OGW</th></tr></thead>
-      <tbody>${table.map((p, k) => `<tr class="${k === 0 && done && last ? 'win' : ''}"><td>${k + 1}</td><td>${esc(p.name)}</td><td><b>${p.mp}</b></td><td>${p.w}-${p.l}-${p.d}</td><td>${(p.omw * 100).toFixed(0)}%</td><td>${(p.gw * 100).toFixed(0)}%</td><td>${(p.ogw * 100).toFixed(0)}%</td></tr>`).join('')}</tbody></table>
-      <p class="muted small">Delas lika: OMW, sedan GW, sedan OGW (som i riktiga turneringar, golv 33 %).</p>
+      <tbody>${table.map((p, k) => `<tr class="${k === 0 && done && last ? 'win' : ''}"><td>${k + 1}</td><td>${esc(p.name)}${p.bye ? ` <span class="pill" title="Stod över en runda – räknas som vinst 2–0">bye</span>` : ''}</td><td><b>${p.mp}</b></td><td>${p.w}-${p.l}-${p.d}</td><td>${(p.omw * 100).toFixed(0)}%</td><td>${(p.gw * 100).toFixed(0)}%</td><td>${(p.ogw * 100).toFixed(0)}%</td></tr>`).join('')}</tbody></table>
+      <p class="muted small">Bye = stod över en runda (udda antal spelare) och fick en vinst. Delas lika: OMW, sedan GW, sedan OGW (som i riktiga turneringar, golv 33 %).</p>
       <p class="row"><span class="spacer"></span><button class="btn small danger" id="tEnd">${t.room ? 'Ta bort här' : 'Ta bort turneringen'}</button></p></div>`;
   el.onclick = e => {
     const b = e.target.closest('[data-res],[data-life]'); if (!b) return;
     if (b.dataset.life != null) {
       const p = t.pairs[cur][+b.dataset.life], ls = lifeState();
-      if (ls?.players && !confirm('En match pågår redan i livräknaren. Starta en ny?')) return;
+      if (ls?.players && !(ls.setup?.tour?.id === t.id && ls.setup.tour.r === cur && ls.setup.tour.i === +b.dataset.life)) {
+        if (!confirm('En match pågår redan i livräknaren. Avbryta den och starta det här partiet?')) return;
+      } else if (ls?.players) { location.hash = '#/liv'; return; } // partiet pågår redan: gå tillbaka till det
       if (ls?.room) roomLeave();
-      lifeState.s = { setup: { n: 2, life: 20, names: [t.players[p.a], t.players[p.b], '', '', '', ''], deck: '', share: false } }; saveLife();
-      location.hash = '#/liv'; return;
+      const names = [t.players[p.a], t.players[p.b]];
+      lifeState.s = { setup: { n: 2, life: tourLife(), names: [...names, '', '', '', ''], deck: '', share: false, tour: { id: t.id, r: cur, i: +b.dataset.life } },
+        start: Date.now(), players: names.map(name => ({ name, life: tourLife(), poison: 0, cmd: {}, ctr: {}, tok: {} })), applied: [], marks: {} };
+      saveLife(); location.hash = '#/liv'; return;
     }
     if (setResult(t, +b.dataset.r, +b.dataset.i, b.dataset.res || null)) tourCommit();
   };
@@ -231,6 +254,7 @@ function tabTour(el) {
   if ($('#tExtra')) $('#tExtra').onclick = () => { t.rounds++; next(); };
   if ($('#tShare')) $('#tShare').onclick = () => { t.room = roomCode(); tourConnect(t.room); tourCommit(); };
   if ($('#tUnshare')) $('#tUnshare').onclick = () => { t.room = ''; tourDisconnect(); tourSave(); render(); };
+  $('#tLife').onclick = () => { const v = [20, 25, 30, 40][([20, 25, 30, 40].indexOf(tourLife()) + 1) % 4]; t.life = v; tourCommit(); toast(`Partierna startar med ${v} liv`); };
   $('#tRounds').onclick = () => { const v = prompt('Antal rundor', t.rounds); if (v && +v >= t.pairs.length && +v <= 8) { t.rounds = +v; tourCommit(); } };
   $('#tEnd').onclick = () => {
     if (!confirm(t.room ? 'Ta bort turneringen från den här telefonen? De andra behåller sin.' : 'Ta bort turneringen och alla resultat?')) return;

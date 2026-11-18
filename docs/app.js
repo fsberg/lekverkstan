@@ -3229,6 +3229,16 @@ function lifeEnd() {
 async function lifeFinish(w, by) {
   const s = lifeState();
   if (!s?.players) return;
+  // parti i en turnering: resultatet går till turneringen, som själv sparar matchen i spelloggen
+  if (s.setup?.tour) {
+    if (w != null && typeof tourGameDone === 'function') tourGameDone(s.setup.tour, w === 'draw' ? 'draw' : +w);
+    else if (w == null) toast('Partiet avbröts');
+    lifeState.s = {}; saveLife();
+    if (!location.hash.startsWith('#/liv')) return;
+    closeModal(); wakeLock(false); document.body.classList.remove('life-on');
+    location.hash = '#/matcher/turnering';
+    return;
+  }
   // en telefon: jag är den plats där mitt konto är valt (eller plats 1 utan konton). Är jag inte med sparas inget hos mig.
   const myIdx = s.setup?.uids ? s.setup.uids.indexOf(S.profile?.id) : 0;
   const me = s.room ? s.me : myIdx >= 0 ? myIdx : null, d = S.decks.find(x => x.id === (s.room ? s.myDeck : s.setup.deck));
