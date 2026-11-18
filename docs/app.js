@@ -3419,9 +3419,10 @@ function hiliteRule(html, words) {
 
 function viewRules(sub) {
   setNav('regler');
-  const tabs = [['format', 'Format'], ['tur', 'Turen och stacken'], ['brackets', 'Brackets'], ['ord', 'Ordlista'], ['bok', 'Regelboken'], ['bannade', 'Bannade kort']];
+  const tabs = [['format', 'Format'], ['tur', 'Turen och stacken'], ['ord', 'Ordlista'], ['bok', 'Regelboken'], ['bannade', 'Bannade kort']];
   // gamla länkar #/regler/commander och #/regler/modern visar formatfliken
   if (sub === 'commander' || sub === 'modern' || sub === 'formats') { viewRules.fmt = sub; sub = 'format'; }
+  if (sub === 'brackets') { viewRules.fmt = 'commander'; sub = 'format'; } // brackets ligger under Commander
   sub = tabs.some(t => t[0] === sub) ? sub : 'format';
   $('#app').innerHTML = `<div class="row"><h1>Regler</h1></div>
     <div class="tabs">${tabs.map(([k, l]) => `<a class="${k === sub ? 'on' : ''}" href="#/regler/${k}">${l}</a>`).join('')}</div><div id="rl"></div>`;
@@ -3430,13 +3431,13 @@ function viewRules(sub) {
     const fmts = [['commander', 'Commander'], ['modern', 'Modern'], ['formats', 'Andra format']];
     const f = fmts.some(x => x[0] === viewRules.fmt) ? viewRules.fmt : 'commander';
     rl.innerHTML = `<div class="seg" id="fmtSeg" style="margin-bottom:.8rem">${fmts.map(([k, l]) => `<button data-fmt="${k}" class="${k === f ? 'on' : ''}">${l}</button>`).join('')}</div>
-      <div class="card rules" style="max-width:820px">${RULES_SV[f]}
+      <div class="card rules" style="max-width:820px">${RULES_SV[f]}${f === 'commander' ? '<div id="brackets" style="margin-top:1.4rem"></div>' + RULES_SV.brackets : ''}
       <p class="small muted">Förenklad sammanfattning. Det exakta står i <a href="#/regler/bok">regelboken</a>.</p></div>`;
     $('#fmtSeg').onclick = e => { const b = e.target.closest('[data-fmt]'); if (b) { viewRules.fmt = b.dataset.fmt; render(); } };
     return;
   }
-  if (sub === 'tur' || sub === 'brackets') {
-    rl.innerHTML = `<div class="card rules" style="max-width:820px">${RULES_SV[sub === 'tur' ? 'turn' : sub]}
+  if (sub === 'tur') {
+    rl.innerHTML = `<div class="card rules" style="max-width:820px">${RULES_SV.turn}
       <p class="small muted">Förenklad sammanfattning. Det exakta står i <a href="#/regler/bok">regelboken</a>.</p></div>`;
     return;
   }
